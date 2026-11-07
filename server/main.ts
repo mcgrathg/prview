@@ -45,7 +45,7 @@ try {
   const serve = await startTailscaleServe(port, isMockGithub ? { enabled: false } : {});
   startCockpitServer(port, fetchHandler, mergeRendererOrigins(Bun.env.COCKPIT_ALLOWED_ORIGINS, serve.origin));
 
-  if (!isMockGithub && !replicaEnabled()) {
+  if (!isMockGithub && !replicaEnabled() && Bun.env.COCKPIT_FOREGROUND_ONLY !== "1") {
     startUsageStats();
     startForwarders(port);
     startPoller();
@@ -56,7 +56,7 @@ try {
     startWebhooks();
     startPrWorktreePruning(prIsOpen);
   }
-  if (!isMockGithub) startUpdateCheck();
+  if (!isMockGithub && Bun.env.COCKPIT_FOREGROUND_ONLY !== "1") startUpdateCheck();
 
   if (serve.enabled && serve.error) {
     console.error(`pr-cockpit: Tailscale Serve failed (${serve.error}); loopback server is still running on http://127.0.0.1:${port}`);

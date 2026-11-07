@@ -1,3 +1,4 @@
+import { reviewOrganization } from "./reviewOrganization.ts";
 import { handleWhiteboard } from "./whiteboard.ts";
 import { codeScanningAlertNumber, isCodeScanningThread, validateCodeScanningDismissal } from "../shared/codeScanning.js";
 import { cookingStage, isBurnt } from "../shared/cookingStage.js";
@@ -3185,6 +3186,30 @@ const REF_RE = /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/;
 
 const MIN_SEARCH_QUERY = 2;
 
+async function handleReviewOrganization(url: URL): Promise<Response> {
+  const repo = url.searchParams.get("repo") ?? "";
+  const numberText = url.searchParams.get("number") ?? "";
+  const head = url.searchParams.get("head") ?? "";
+  const base = url.searchParams.get("base") ?? "";
+  const [owner, name] = repo.split("/");
+  if (!owner || !name || !validPrReference(owner, name, numberText) || !FULL_SHA_RE.test(head) || !FULL_SHA_RE.test(base)) {
+    return json({ error: "invalid comparison" }, 400);
+  }
+  const ctx = resolvePrContext(repo, Number(numberText));
+  if (!ctx || ctx.headSha !== head || ctx.baseSha !== base) return json({ error: "Comparison changed; reload the PR." }, 409);
+  const patch = getDiff(`${base}...${head}`);
+  if (!patch) return json({ error: "Load the PR diff before organizing it." }, 409);
+  return withSearchCtx(repo, head, head, async (source) => {
+    if (source.status !== "ok") return json({ error: `Source mirror ${source.status}; retry after it finishes.` }, 503);
+    try {
+      const result = await reviewOrganization(repo, Number(numberText), base, head, new TextDecoder().decode(patch), source.checkout);
+      return json(result);
+    } catch (error) {
+      return json({ error: String(error) }, 503);
+    }
+  });
+}
+
 async function handleRepoSearch(req: Request, url: URL): Promise<Response> {
   const repo = url.searchParams.get("repo") ?? "";
   const sha = url.searchParams.get("sha") ?? "";
@@ -4220,6 +4245,9 @@ export function buildFetchHandler(port: number, dependencyOverrides: Partial<Htt
     }
     if (req.method === "GET" && url.pathname === "/api/file-history/diff") {
       return handleFileHistoryDiff(req, url);
+    }
+    if (req.method === "GET" && url.pathname === "/api/review-organization") {
+      return handleReviewOrganization(url);
     }
     if (req.method === "GET" && url.pathname === "/api/repo-search") {
       return handleRepoSearch(req, url);

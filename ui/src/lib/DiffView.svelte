@@ -1839,6 +1839,23 @@
     });
   });
 
+  let observedOrder = "";
+  $effect(() => {
+    const order = files.map(file => file.path).join("\0");
+    if (order === observedOrder) return;
+    observedOrder = order;
+    void tick().then(() => {
+      if (observedOrder !== order) return;
+      observedFileNodes.length = 0;
+      for (const [node, path] of observedFiles) {
+        const index = fileIndexes.get(path);
+        if (index !== undefined) observedFileNodes[index] = node;
+      }
+      warmVisibleFiles();
+      queueMounts();
+    });
+  });
+
   $effect(() => {
     if (files.length !== 0) return;
     pendingPaths.clear();

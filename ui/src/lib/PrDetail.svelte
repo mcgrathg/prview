@@ -79,6 +79,8 @@
   import ConflictEditor from "./ConflictEditor.svelte";
   import RangePicker from "./RangePicker.svelte";
   import FileTree from "./FileTree.svelte";
+  import ReviewOrganization from "./ReviewOrganization.svelte";
+  import { organizationKey } from "../../../shared/review-organization/machine.ts";
   import Kbd from "./Kbd.svelte";
   import Thread from "./Thread.svelte";
   import { shareSnapshot } from "./shareSnapshot.js";
@@ -108,7 +110,28 @@
 
   let pr = $state.raw(null);
   let actionsRunUrl = $state(null);
-  let files = $state.raw([]);
+  const organizationEnabled = new URL(location.href).searchParams.get("organize") === "1";
+  let comparisonFiles = $state.raw([]);
+  let organizationPanel = $state(null);
+  let organization = $state.raw(null);
+  let organizationComparison = $derived({ repo, number, base: range?.base ?? pr?.baseRefOid ?? "", head: range?.head ?? pr?.headRefOid ?? "" });
+  let organizationActive = $derived(organizationEnabled && organization?.key === organizationKey(organizationComparison));
+  let files = $derived.by(() => {
+    if (!organizationActive) return comparisonFiles;
+    const byPath = new Map(comparisonFiles.map(file => [file.path, file]));
+    return organization.paths.map(path => byPath.get(path)).filter(Boolean);
+  });
+  let organizationCollapsed = $derived(organizationActive ? new Set([...collapsedFiles, ...organization.folded]) : collapsedFiles);
+  function receiveOrganization(next) {
+    const hadModel = organization?.key === next.key;
+    const selected = hadModel ? files[fileIndex]?.path : null;
+    const previousPaths = hadModel ? files.map(file => file.path).join("\n") : "";
+    organization = next;
+    fileIndex = Math.max(0, files.findIndex(file => file.path === selected));
+    if (selected && previousPaths !== files.map(file => file.path).join("\n")) {
+      requestAnimationFrame(() => scrollToFile(fileIndex));
+    }
+  }
   // Attribute-generated paths for the displayed diff's commits; always replaced together with `files`.
   let generatedPaths = $state.raw(new Set());
   // Patterns this visit committed as generated, hidden until the new head's attributes classify them.
@@ -187,7 +210,7 @@
     const loadingTimer = cachedDetail ? null : setTimeout(() => {
       if (activeFetch === token && !pr && !error) showLoading = true;
     }, 250);
-    files = [];
+    comparisonFiles = [];
     generatedPaths = new Set();
     classifiedDiffKey = null;
     excludedFoldAppliedFor = null;
@@ -444,7 +467,7 @@
     diffDocument = diff.document;
     syncViewedFiles(diff.files);
     displayedDiffKey = diff.dkey;
-    files = [...diff.files].sort((left, right) => left.path.localeCompare(right.path));
+    comparisonFiles = [...diff.files].sort((left, right) => left.path.localeCompare(right.path));
     generatedPaths = diff.generated;
     classifiedDiffKey = diff.classifiedKey;
     fileIndex = 0;
@@ -552,7 +575,7 @@
         rangeKey = "all";
         rewriteFallback = true;
       } else {
-        files = [];
+        comparisonFiles = [];
         generatedPaths = new Set();
         diffState = "error";
         diffError = res.error;
@@ -2274,7 +2297,7 @@
   const fileFilters = ["all", "hide", "only"];
   const fileFilterLabels = { all: "All files", hide: "Hide tests/generated", only: "Only tests/generated" };
   let fileFilter = $derived(excludedChoice ?? (prefs.hideExcludedDefault ? "hide" : "all"));
-  let treeFiles = $derived(fileFilter === "hide" ? includedFiles : fileFilter === "only" ? excludedFiles : files);
+  let treeFiles = $derived(organizationEnabled ? files : fileFilter === "hide" ? includedFiles : fileFilter === "only" ? excludedFiles : files);
 
   function startTreeResize(e) {
     e.preventDefault();
@@ -2303,6 +2326,7 @@
   let excludedFoldAppliedFor = null;
 
   function applyExcludedFolds(mode) {
+    if (organizationEnabled) return;
     const next = new Set(collapsedFiles);
     for (const path of groupFolds) if (!viewedFiles.has(path)) next.delete(path);
     const hidden = mode === "hide" ? excludedFiles : mode === "only" ? includedFiles : [];
@@ -2318,6 +2342,7 @@
   });
 
   function toggleExcludedFiles() {
+    if (organizationEnabled) { organizationPanel?.toggleTests(); return; }
     excludedChoice = fileFilters[(fileFilters.indexOf(fileFilter) + 1) % fileFilters.length];
     applyExcludedFolds(excludedChoice);
   }
@@ -2407,6 +2432,13 @@
   }
 
   function toggleFileCollapse(file) {
+    if (organizationEnabled) {
+      const next = new Set(collapsedFiles);
+      if (organizationCollapsed.has(file.path)) next.delete(file.path); else next.add(file.path);
+      collapsedFiles = next;
+      organizationPanel?.toggleFold(file.path);
+      return;
+    }
     setFileViewed(file, !collapsedFiles.has(file.path));
   }
 
@@ -2697,7 +2729,10 @@
 
   function openChangedFile(path) {
     const i = files.findIndex((f) => f.path === path);
-    if (i < 0) return;
+    if (i < 0) {
+      if (organizationEnabled && comparisonFiles.some(file => file.path === path)) void organizationPanel?.revealFile(path);
+      return;
+    }
     fileIndex = i;
     if (tab !== "files") goToTab("files");
     let tries = 20;
@@ -2738,7 +2773,7 @@
     if (!finishFileEdit()) return;
     if (rangeKey !== "all") {
       rangeKey = "all";
-      files = [];
+      comparisonFiles = [];
       generatedPaths = new Set();
     }
     const parent = `#/pr/${repo}/${number}/files`;
@@ -3011,7 +3046,7 @@
     { key: "J / K", label: "file" },
     { key: "v", label: "toggle file viewed" },
     { key: "c", label: "changes range" },
-    { key: "x", label: "cycle file filter" },
+    { key: "x", label: organizationEnabled ? "toggle tests" : "cycle file filter" },
     { key: "h", label: "file history" },
     { key: "r", label: "reply" },
     { key: "e", label: "edit inline" },
@@ -3422,7 +3457,7 @@
               {/if}
             </div>
             <div class="toolbar-left">
-              {#if files.length && diffState === "ready"}
+              {#if !organizationEnabled && files.length && diffState === "ready"}
                 <button class="toolbar-btn shortcut-action" onclick={toggleExcludedFiles}>
                   {fileFilterLabels[fileFilter]} <Kbd keys="x" />
                 </button>
@@ -3435,7 +3470,11 @@
               <span>Changed files</span>
               {#if pr.changedFiles > 0}<span class="fcount">{diffState === "ready" ? treeFiles.length : pr.changedFiles}</span>{/if}
             </div>
-            <FileTree files={treeFiles} {selectedPath} hoveredPath={hoveredDiffPath} onSelect={selectFileByPath} onContextMenu={prefs.reviewFileMenuEnabled ? openFileMenu : null} />
+            {#if organizationEnabled && diffState === "ready" && comparisonFiles.length}
+              <ReviewOrganization bind:this={organizationPanel} comparison={organizationComparison} nativeFiles={comparisonFiles} {selectedPath} onChange={receiveOrganization} onSelect={openChangedFile} />
+            {:else}
+              <FileTree files={treeFiles} {selectedPath} hoveredPath={hoveredDiffPath} onSelect={selectFileByPath} onContextMenu={prefs.reviewFileMenuEnabled ? openFileMenu : null} />
+            {/if}
           </aside>
           <div class="tree-resizer" role="separator" aria-orientation="vertical" onpointerdown={startTreeResize}></div>
           <div class="diff-pane">
@@ -3450,7 +3489,7 @@
             {:else if diffState === "building"}
               <div class="diff-status">Preparing diff…</div>
             {:else if files.length === 0}
-              <div class="diff-status">No changes in this range.</div>
+              <div class="diff-status">{organizationEnabled && comparisonFiles.length ? "No visible files match. Use Show all or clear the file search." : "No changes in this range."}</div>
             {:else}
               <DiffView
                 bind:this={diffView}
@@ -3460,7 +3499,7 @@
                 onReadFile={(path) => diffDocument?.read(path)}
                 anchored={threadSplit.anchored}
                 {threadProps}
-                collapsed={collapsedFiles}
+                collapsed={organizationCollapsed}
                 onToggleFile={toggleFileCollapse}
                 {repo}
                 viewed={viewedFiles}
@@ -4387,7 +4426,7 @@
       <KeyBar keys={tab === "files" ? filesKeys : tab === "agents" || tab === "actions" ? tabKeys : conversationKeys} />
     {/if}
 
-    <Telescope bind:this={telescope} {repo} headSha={pr.headRefOid} headRef={pr.headRefName} {fileFilter} changedFiles={files} onOpenChangedFile={openChangedFile} onOpenHistory={openFileHistory} bind:open={telescopeOpen} />
+    <Telescope bind:this={telescope} {repo} headSha={pr.headRefOid} headRef={pr.headRefName} fileFilter={organizationEnabled ? "all" : fileFilter} changedFiles={organizationEnabled ? comparisonFiles : files} onOpenChangedFile={openChangedFile} onOpenHistory={openFileHistory} bind:open={telescopeOpen} />
     <FileHistory
       {repo}
       path={historyPath}
