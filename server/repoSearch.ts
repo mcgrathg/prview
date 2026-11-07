@@ -215,18 +215,22 @@ export async function findDefinition(
   }
 
   const source = showFile(checkout, sha, fromPath) ?? "";
-  const candidates = declarationCandidates(await grep(checkout, sha, symbol, signal), symbol);
+  const bindings = importedBindings(source, symbol);
+  if (bindings.length) {
+    for (const binding of bindings) {
+      if (!binding.module.startsWith(".")) continue;
+      const importedCandidates = declarationCandidates(await grep(checkout, sha, binding.imported, signal), binding.imported)
+        .filter((match) => resolvesModule(match.path, fromPath, binding.module));
+      if (importedCandidates.length === 1) return { definition: importedCandidates[0]!, candidates: importedCandidates };
+      if (importedCandidates.length > 1) return { definition: null, candidates: importedCandidates };
+    }
+    return { definition: null, candidates: [] };
+  }
 
+  const candidates = declarationCandidates(await grep(checkout, sha, symbol, signal), symbol);
   const sameFile = candidates.filter((match) => match.path === fromPath);
   if (sameFile.length === 1) return { definition: sameFile[0]!, candidates };
   if (sameFile.length > 1) return { definition: null, candidates: sameFile };
-
-  for (const binding of importedBindings(source, symbol)) {
-    const importedCandidates = declarationCandidates(await grep(checkout, sha, binding.imported, signal), binding.imported)
-      .filter((match) => resolvesModule(match.path, fromPath, binding.module));
-    if (importedCandidates.length === 1) return { definition: importedCandidates[0]!, candidates: importedCandidates };
-    if (importedCandidates.length > 1) return { definition: null, candidates: importedCandidates };
-  }
 
   if (candidates.length === 1) return { definition: candidates[0]!, candidates };
   return { definition: null, candidates };
