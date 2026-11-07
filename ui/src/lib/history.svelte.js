@@ -1,3 +1,4 @@
+import { REVIEW_NAVIGATION_EVENT } from "./reviewHistory.js";
 import { historyBackAction } from "./historyAction.js";
 
 export const history = $state({ canBack: false, canForward: false });
@@ -46,23 +47,26 @@ export function initHistory() {
   let counter = 0;
   let cur = 0;
   let max = 0;
-  window.history.replaceState({ navId: 0 }, "");
+  window.history.replaceState({ ...window.history.state, navId: 0 }, "");
 
   const sync = () => {
     history.canBack = cur > 0;
     history.canForward = cur < max;
   };
 
-  window.addEventListener("hashchange", () => {
+  const onNavigation = () => {
     const navId = window.history.state?.navId;
     if (typeof navId === "number") {
       cur = navId;
     } else {
       cur = ++counter;
       max = cur;
-      window.history.replaceState({ navId: cur }, "");
+      window.history.replaceState({ ...window.history.state, navId: cur }, "");
     }
     sync();
-  });
+  };
+  window.addEventListener("hashchange", onNavigation);
+  window.addEventListener("popstate", onNavigation);
+  window.addEventListener(REVIEW_NAVIGATION_EVENT, onNavigation);
   sync();
 }

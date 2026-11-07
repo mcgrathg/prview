@@ -920,6 +920,64 @@ async function graphql<T>(
     graphqlRequest<T>(query, variables, source, operation, authentication, missingAllowed), /^\s*mutation\b/.test(query));
 }
 
+export type GithubViewerGraphql = <T = unknown>(query: string, variables: Record<string, unknown>, operation: string) => Promise<T>;
+
+export async function withGithubViewerGraphql<T>(
+  repo: string,
+  source: GithubUsageSource,
+  work: (request: GithubViewerGraphql) => Promise<T>,
+): Promise<T> {
+  if (mockGithub) throw new GithubRequestError("Native Viewed state is unavailable in screenshot fixture mode", 405);
+  assertQuotaAvailable("graphql", false);
+  const authentication = await userAuthentication();
+  return withGithubUsageSource(source, () => work(<R>(query: string, variables: Record<string, unknown>, operation: string) => {
+    recordUserFallback(repo, "viewer", "graphql", operation);
+    return graphqlRequest<R>(query, variables, source, operation, authentication);
+  }));
+}
+
+export interface GithubViewerAttachmentClient {
+  graphql: GithubViewerGraphql;
+  upload(repositoryId: number, name: string, contentType: string, bytes: Uint8Array, signal?: AbortSignal): Promise<Response>;
+}
+
+export async function withGithubViewerAttachmentClient<T>(
+  repo: string,
+  source: GithubUsageSource,
+  work: (client: GithubViewerAttachmentClient) => Promise<T>,
+): Promise<T> {
+  if (mockGithub) throw new GithubRequestError("Attachment uploads are unavailable in fixture mode", 405);
+  assertQuotaAvailable("graphql", false);
+  const authentication = await userAuthentication();
+  return withGithubUsageSource(source, () => work({
+    graphql: <R>(query: string, variables: Record<string, unknown>, operation: string) => {
+      recordUserFallback(repo, "viewer", "graphql", operation);
+      return graphqlRequest<R>(query, variables, source, operation, authentication);
+    },
+    upload: async (repositoryId, name, contentType, bytes, signal) => {
+      assertQuotaAvailable("core", false, authentication.state);
+      const url = new URL("https://uploads.github.com/user-attachments/assets");
+      url.search = new URLSearchParams({ name, content_type: contentType, repository_id: String(repositoryId) }).toString();
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: "POST", redirect: "error",
+          headers: { Authorization: `token ${authentication.token}`, Accept: "application/vnd.github+json", "Content-Type": "application/octet-stream", "Content-Length": String(bytes.byteLength) },
+          body: new Uint8Array(bytes).buffer,
+          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS)]) : AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
+        });
+      } catch (error) {
+        throw new GithubRequestError("GitHub upload did not finish. It may already have accepted the attachment; no automatic retry was made.", 503, [], "transport", "core", null, error);
+      }
+      responseCredentials.set(response, authentication.state);
+      responseQuotaResources.set(response, "core");
+      accountQuota(response, "core", authentication.state, false);
+      if (!response.ok) throw await githubResponseError("GitHub refused the attachment upload for this credential or repository", response);
+      return response;
+    },
+  }));
+}
+
 async function graphqlRequest<T>(
   query: string,
   variables: Record<string, unknown>,

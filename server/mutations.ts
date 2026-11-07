@@ -28,6 +28,7 @@ import {
   convertPullRequestToDraft,
   markPullRequestReadyForReview,
   postInlineComment,
+  StalePrHeadError,
   postIssueComment,
   postReview,
   postReviewCommentReply,
@@ -78,7 +79,7 @@ export type MutationPayload =
   | { kind: "auto-merge"; enable: boolean }
   | { kind: "github-auto-merge"; enable: true; method: MergeMethod }
   | { kind: "github-auto-merge"; enable: false }
-  | { kind: "inline-comment"; path: string; line: number; side: "LEFT" | "RIGHT"; startLine?: number; startSide?: "LEFT" | "RIGHT"; body: string }
+  | { kind: "inline-comment"; headSha?: string; path: string; line: number; side: "LEFT" | "RIGHT"; startLine?: number; startSide?: "LEFT" | "RIGHT"; body: string }
   | { kind: "pending-inline-comment"; headSha: string; path: string; line: number; side: "LEFT" | "RIGHT"; startLine?: number; startSide?: "LEFT" | "RIGHT"; body: string }
   | { kind: "edit-pending-comment"; reviewId: number; commentId: number; body: string }
   | { kind: "delete-pending-comment"; reviewId: number; commentId: number }
@@ -183,6 +184,10 @@ function assertMutationPayload(value: unknown): asserts value is MutationPayload
   }
   if (value.kind === "review-verdict" && "pendingReviewId" in value && value.pendingReviewId !== undefined && !positiveId(value.pendingReviewId)) {
     throw new Error("pending review verdict requires a valid review ID");
+  }
+  if (value.kind === "inline-comment" && "headSha" in value
+    && (typeof value.headSha !== "string" || !/^[0-9a-f]{40}$/i.test(value.headSha))) {
+    throw new Error("inline comment requires a valid captured head SHA");
   }
   if (value.kind === "pending-inline-comment") {
     if (!("headSha" in value) || typeof value.headSha !== "string" || !/^[0-9a-f]{40}$/i.test(value.headSha)
@@ -403,8 +408,12 @@ async function executeMutation(row: MutationRow): Promise<boolean> {
       await updatePullRequestTitle(row.repo, row.number, payload.title);
       return false;
     case "inline-comment": {
+      if (payload.headSha !== undefined) await refreshPr(row.repo, row.number, "mutation recovery", "all", "detail");
       const { headSha } = requirePrRef(row.repo, row.number);
-      await postInlineComment(row.repo, row.number, headSha, payload);
+      if (payload.headSha !== undefined && headSha.toLowerCase() !== payload.headSha.toLowerCase()) {
+        throw new StalePrHeadError("PR head changed; refresh before publishing this inline comment");
+      }
+      await postInlineComment(row.repo, row.number, payload.headSha ?? headSha, payload);
       return false;
     }
     case "pending-inline-comment":

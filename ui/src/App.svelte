@@ -1,4 +1,6 @@
 <script>
+  import { parseReviewRoute } from "./lib/reviewRoute.js";
+  import { REVIEW_NAVIGATION_EVENT } from "./lib/reviewHistory.js";
   import HistoryGesture from "./lib/HistoryGesture.svelte";
   import SetAsideTray from "./lib/SetAsideTray.svelte";
   import Inbox from "./lib/Inbox.svelte";
@@ -44,34 +46,8 @@
   const isShell = navigator.userAgent.includes("Electron");
 
   function parseRoute(hash) {
-    const match = hash.match(/^#\/pr\/([^/]+)\/([^/]+)\/(\d+)(?:\/(files|agents)|\/(actions)(?:\?([^#]+))?|\/history\/([^/?]+)(?:\?symbol=([^&]+))?)?(?:\?comment=([^&#]+))?$/i);
-    if (match) {
-      let historyPath = null;
-      let historySymbol = null;
-      const actionParams = new URLSearchParams(match[6] ?? "");
-      const actionSha = actionParams.get("sha");
-      const actionJobText = actionParams.get("job");
-      if (actionSha !== null && !/^[0-9a-f]{40}$/i.test(actionSha)) return { name: "inbox" };
-      if (actionJobText !== null && !/^\d+$/.test(actionJobText)) return { name: "inbox" };
-      try {
-        historyPath = match[7] ? decodeURIComponent(match[7]) : null;
-        historySymbol = match[8] ? decodeURIComponent(match[8]) : null;
-      } catch {
-        return { name: "inbox" };
-      }
-      return {
-        name: "detail",
-        repo: `${match[1]}/${match[2]}`,
-        number: Number(match[3]),
-        tab: historyPath ? "files" : match[5] ?? match[4] ?? "conversation",
-        actionSha,
-        actionJob: actionJobText === null ? null : Number(actionJobText),
-        historyPath,
-        historySymbol,
-        // A fresh object per parse: PrDetail reveals the comment once per navigation that names it.
-        commentTarget: parseCommentTarget(match[9]),
-      };
-    }
+    const detail = parseReviewRoute(hash);
+    if (detail) return detail;
     const actionsRunMatch = hash.match(/^#\/actions\/run\/([^/]+)\/([^/]+)\/(\d+)$/);
     if (actionsRunMatch) {
       return {
@@ -172,7 +148,13 @@
       route = next;
     };
     window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
+    window.addEventListener("popstate", onHash);
+    window.addEventListener(REVIEW_NAVIGATION_EVENT, onHash);
+    return () => {
+      window.removeEventListener("hashchange", onHash);
+      window.removeEventListener("popstate", onHash);
+      window.removeEventListener(REVIEW_NAVIGATION_EVENT, onHash);
+    };
   });
 
   $effect(() => {
@@ -430,7 +412,7 @@
       {#if setupOpen}
         <Onboarding onDone={finishSetup} onCancel={() => (setupOpen = false)} />
       {:else if route.name === "detail"}
-        <PrDetail repo={route.repo} number={route.number} tab={route.tab} actionSha={route.actionSha} actionJob={route.actionJob} historyPath={route.historyPath} historySymbol={route.historySymbol} commentTarget={route.commentTarget} refreshRevision={detailRevision} />
+        <PrDetail repo={route.repo} number={route.number} tab={route.tab} actionSha={route.actionSha} actionJob={route.actionJob} historyPath={route.historyPath} historySymbol={route.historySymbol} commentTarget={route.commentTarget} reviewLocation={route.review} refreshRevision={detailRevision} />
       {:else if route.name === "settings"}
         {#if route.section === "usage"}
           <Usage />

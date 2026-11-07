@@ -1,4 +1,15 @@
 <script>
+  import { createActor } from "xstate";
+  import { normalizeReviewState, buildReviewHash } from "./reviewRoute.js";
+  import { beginReviewFileDrag, isReviewFileDragging } from "./reviewFileDrag.js";
+  import { relatedCandidates } from "../../../shared/review-organization/relationships.ts";
+  import { canChangeViewed } from "./reviewViewedGuard.js";
+  import { reviewViewedMachine } from "./reviewViewedMachine.js";
+  import { reviewNavigationMachine } from "./reviewNavigation.js";
+  import { commitReviewLocation } from "./reviewHistory.js";
+  import WorkspaceDiff from "./WorkspaceDiff.svelte";
+  import WorkspaceSource from "./WorkspaceSource.svelte";
+  import ReviewWorkspace from "./ReviewWorkspace.svelte";
   import { isSetAside, putAside, bringBack } from "./setAside.svelte.js";
   import { flushSync, onDestroy, tick, untrack } from "svelte";
   import {
@@ -100,7 +111,7 @@
     { value: "REQUEST_CHANGES", label: "Request changes", tone: "red" },
   ];
 
-  let { repo, number, tab, actionSha = null, actionJob = null, historyPath = null, historySymbol = null, commentTarget = null, refreshRevision = 0 } = $props();
+  let { repo, number, tab, actionSha = null, actionJob = null, historyPath = null, historySymbol = null, commentTarget = null, reviewLocation = null, refreshRevision = 0 } = $props();
   let handledRefreshRevision = refreshRevision;
   loadPrIndex();
 
@@ -111,6 +122,111 @@
   let pr = $state.raw(null);
   let actionsRunUrl = $state(null);
   const organizationEnabled = new URL(location.href).searchParams.get("organize") === "1";
+  const navigationActor = createActor(reviewNavigationMachine, { input: { review: untrack(() => reviewLocation) } }).start();
+  onDestroy(() => navigationActor.stop());
+  let reviewState = $derived(normalizeReviewState(reviewLocation));
+  let workspace = $state(null);
+  let workspaceEnabled = $derived(organizationEnabled && Boolean(reviewState.panes?.length));
+  let activeReviewPane = $derived(reviewState.panes?.find(p => p.id === reviewState.active));
+  let searchOrigin = $derived(workspaceEnabled ? activeReviewPane ?? reviewState : reviewState);
+  let searchRevision = $derived(searchOrigin.side === 'left' ? searchOrigin.base ?? organizationComparison.base : searchOrigin.rev ?? organizationComparison.head);
+  let definitionContext = $derived(JSON.stringify([workspaceEnabled ? activeReviewPane?.id : 'single', searchOrigin.file, searchOrigin.view, searchOrigin.side, searchRevision]));
+  let restoredLocation = '';
+  function navigateReview(patch, mode = 'push') {
+    if (!organizationEnabled || !pr) return;
+    const next = normalizeReviewState({ ...reviewState, rev: range?.head ?? pr.headRefOid, base: range?.base ?? pr.baseRefOid, ...patch });
+    navigationActor.send({ type: 'NAVIGATE', review: next, historyMode: mode });
+    commitReviewLocation(repo, number, next, mode);
+  }
+  function navigatePane(patch, mode = 'push') {
+    if (patch.file && patch.view === 'source') {
+      const pane = workspaceEnabled ? reviewState.panes.find(p => p.id === reviewState.active) : null;
+      const origin = pane ?? reviewState;
+      const rev = origin.side === 'left' ? origin.base ?? organizationComparison.base : origin.rev ?? organizationComparison.head;
+      const location = { ...patch, rev, base: origin.base ?? organizationComparison.base, side: 'right' };
+      if (workspaceEnabled) { workspace?.updatePane(reviewState.active, location); return; }
+      navigateReview(location, mode);
+      return;
+    }
+    navigateReview(patch, mode);
+  }
+  function openBeside(path) {
+    if (!finishFileEdit()) return;
+    if (workspaceEnabled) { workspace?.openFile(path, true, { rev: organizationComparison.head, base: organizationComparison.base, layout: reviewState.layout }); return; }
+    const first = reviewState.file ?? selectedPath ?? files[0]?.path;
+    const panes = [];
+    if (first) panes.push({ id: 'p1', file: first, view: 'diff', layout: reviewState.layout, rev: organizationComparison.head, base: organizationComparison.base });
+    panes.push({ id: 'p2', file: path, view: 'diff', layout: reviewState.layout, rev: organizationComparison.head, base: organizationComparison.base });
+    navigateReview({ panes, active: 'p2', file: path, view: 'diff' });
+  }
+  function workspaceChanged({ panes, active }, mode = 'push') {
+    const focused = panes.find(p => p.id === active);
+    navigateReview({ panes: panes.length ? panes : undefined, active, ...(focused?.file ? { file: focused.file, line: focused.line, side: focused.side, view: focused.view === 'source' ? 'source' : 'diff', layout: focused.layout } : {}) }, mode);
+  }
+  async function followDefinition(symbol, fromPath, position, pane = null) {
+    // The return entry names the exact origin, before an asynchronous lookup changes location.
+    if (workspaceEnabled && pane) { workspace?.focusPane(pane.id); workspace?.updatePane(pane.id, { line: position?.line ?? null, side: position?.side ?? pane.side ?? 'right' }, 'replace'); await tick(); }
+    else { navigateReview({ file: fromPath, line: position?.line ?? null, side: position?.side ?? 'right', view: 'diff' }, 'replace'); await tick(); }
+    telescope?.openDefinition(symbol, fromPath, position);
+  }
+  $effect(() => {
+    if (!organizationEnabled || !pr || tab !== 'files') return;
+    const target = reviewState;
+    untrack(() => {
+      navigationActor.send({ type: 'RESTORE', review: target });
+      const key = target.rev && target.base && (target.rev !== pr.headRefOid || target.base !== pr.baseRefOid) ? `r${target.base}:${target.rev}` : 'all';
+      if (rangeKey !== key) rangeKey = key;
+    });
+  });
+  $effect(() => {
+    if (!organizationEnabled || !pr || tab !== 'files' || diffState !== 'ready') return;
+    const target = reviewState;
+    const key = JSON.stringify([repo, number, displayedDiffKey, target.file, target.line, target.side, target.view, Boolean(target.panes)]);
+    const sequence = navigationActor.getSnapshot().context.sequence;
+    if (key === restoredLocation) { navigationActor.send({ type: 'APPLIED', sequence }); return; }
+    restoredLocation = key;
+    untrack(async () => {
+      if (target.file && target.view === 'diff' && !target.panes?.length) {
+        if (!files.some(f => f.path === target.file) && comparisonFiles.some(f => f.path === target.file)) await organizationPanel?.revealFile(target.file, false);
+        await tick();
+        if (navigationActor.getSnapshot().context.sequence !== sequence) return;
+        revealChangedFile(target.file, target.line, target.side);
+      }
+      navigationActor.send({ type: 'APPLIED', sequence });
+    });
+  });
+  const viewedActor = createActor(reviewViewedMachine).start();
+  let viewedSnapshot = $state(viewedActor.getSnapshot());
+  const viewedSubscription = viewedActor.subscribe(next => viewedSnapshot = next);
+  onDestroy(() => { viewedSubscription.unsubscribe(); viewedActor.stop(); });
+  let githubViewed = $derived(viewedSnapshot.context.snapshot);
+  let viewedAligned = $derived(!!pr && githubViewed?.repo === repo && githubViewed?.number === number && githubViewed?.headOid === pr.headRefOid && githubViewed?.baseOid === pr.baseRefOid);
+  $effect(() => {
+    if (!organizationEnabled || !pr) return;
+    viewedActor.send({ type: 'CONTEXT', repo, number, head: pr.headRefOid, base: pr.baseRefOid });
+  });
+  $effect(() => {
+    if (!organizationEnabled) return;
+    viewedFiles = viewedAligned ? new Set(githubViewed.files.filter(file => file.state === 'VIEWED').map(file => file.path)) : new Set();
+  });
+  $effect(() => {
+    if (!organizationEnabled) return;
+    const refresh = () => viewedActor.send({ type: 'REFRESH' });
+    window.addEventListener('focus', refresh);
+    const visibility = () => { if (document.visibilityState === 'visible') refresh(); };
+    document.addEventListener('visibilitychange', visibility);
+    return () => { window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', visibility); };
+  });
+  let collapseIdentity = '';
+  const collapseKey = () => `prview:collapsed:v1:${repo}#${number}`;
+  function saveCollapsedFiles() { try { localStorage.setItem(collapseKey(), JSON.stringify([...collapsedFiles])); } catch {} }
+  $effect(() => {
+    if (!pr || diffState !== 'ready') return;
+    const key = `${repo}#${number}`;
+    if (collapseIdentity === key) return;
+    collapseIdentity = key;
+    try { const paths = JSON.parse(localStorage.getItem(collapseKey()) ?? '[]'); collapsedFiles = new Set(Array.isArray(paths) ? paths.filter(path => typeof path === 'string') : []); } catch { collapsedFiles = new Set(); }
+  });
   let comparisonFiles = $state.raw([]);
   let organizationPanel = $state(null);
   let organization = $state.raw(null);
@@ -128,7 +244,7 @@
     const previousPaths = hadModel ? files.map(file => file.path).join("\n") : "";
     organization = next;
     fileIndex = Math.max(0, files.findIndex(file => file.path === selected));
-    if (selected && previousPaths !== files.map(file => file.path).join("\n")) {
+    if (selected && !workspaceEnabled && previousPaths !== files.map(file => file.path).join("\n")) {
       requestAnimationFrame(() => scrollToFile(fileIndex));
     }
   }
@@ -2260,7 +2376,7 @@
   let collapsedFiles = $state(new Set());
   let viewedFiles = $state(new Set());
   let hoveredDiffPath = $state(null);
-  let selectedPath = $derived(files[fileIndex]?.path ?? null);
+  let selectedPath = $derived((workspaceEnabled ? reviewState.panes.find(p => p.id === reviewState.active)?.file : null) ?? files[fileIndex]?.path ?? null);
 
   let hiddenHere = $derived(prefs.hiddenReviewPaths[repo] ?? []);
   let testPattern = $derived(testMatcher(prefs.testPathRegex, [...hiddenHere, ...markedGenerated]));
@@ -2348,6 +2464,12 @@
   }
 
   async function toggleDiffLayout() {
+    if (organizationEnabled) {
+      const layout = reviewState.layout === 'split' ? 'unified' : 'split';
+      if (workspaceEnabled) workspace?.updatePane(reviewState.active, { layout });
+      else navigateReview({ layout });
+      return;
+    }
     const previous = prefs.diffLayout;
     prefs.diffLayout = previous === "split" ? "unified" : "split";
     try {
@@ -2381,8 +2503,7 @@
   }
 
   function syncViewedFiles(nextFiles) {
-    const nextCollapsed = new Set(collapsedFiles);
-    for (const path of viewedFiles) nextCollapsed.delete(path);
+    if (organizationEnabled) return;
 
     const records = loadViewedFileRecords();
     const nextViewed = new Set();
@@ -2394,30 +2515,24 @@
       const fingerprint = fileDiffFingerprint(file);
       if (records[file.path]?.fingerprint === fingerprint) {
         nextViewed.add(file.path);
-        nextCollapsed.add(file.path);
       } else {
         delete records[file.path];
       }
     }
     viewedFiles = nextViewed;
-    collapsedFiles = nextCollapsed;
     saveViewedFileRecords(records);
   }
 
-  function updateViewedFiles(targetFiles, viewed) {
-    const nextViewed = new Set(viewedFiles);
-    const nextCollapsed = new Set(collapsedFiles);
-    for (const file of targetFiles) {
-      if (viewed) {
-        nextViewed.add(file.path);
-        nextCollapsed.add(file.path);
-      } else {
-        nextViewed.delete(file.path);
-        nextCollapsed.delete(file.path);
-      }
+  function updateViewedFiles(targetFiles, viewed, comparison = organizationComparison) {
+    if (organizationEnabled) {
+      // Native GitHub writes are confirmed individually; batch gestures never imply review.
+      if (!canChangeViewed({ rangeKey, comparison, pullRequest: pr, snapshot: githubViewed, state: viewedSnapshot.value })) return;
+      if (targetFiles.length === 1) viewedActor.send({ type: 'TOGGLE', path: targetFiles[0].path, viewed });
+      return;
     }
+    const nextViewed = new Set(viewedFiles);
+    for (const file of targetFiles) { if (viewed) nextViewed.add(file.path); else nextViewed.delete(file.path); }
     viewedFiles = nextViewed;
-    collapsedFiles = nextCollapsed;
 
     const records = loadViewedFileRecords();
     for (const file of targetFiles) {
@@ -2427,19 +2542,16 @@
     saveViewedFileRecords(records);
   }
 
-  function setFileViewed(file, viewed) {
-    updateViewedFiles([file], viewed);
+  function setFileViewed(file, viewed, comparison = organizationComparison) {
+    updateViewedFiles([file], viewed, comparison);
   }
 
   function toggleFileCollapse(file) {
-    if (organizationEnabled) {
-      const next = new Set(collapsedFiles);
-      if (organizationCollapsed.has(file.path)) next.delete(file.path); else next.add(file.path);
-      collapsedFiles = next;
-      organizationPanel?.toggleFold(file.path);
-      return;
-    }
-    setFileViewed(file, !collapsedFiles.has(file.path));
+    const next = new Set(collapsedFiles);
+    if ((organizationEnabled ? organizationCollapsed : collapsedFiles).has(file.path)) next.delete(file.path); else next.add(file.path);
+    collapsedFiles = next;
+    saveCollapsedFiles();
+    if (organizationEnabled) organizationPanel?.toggleFold(file.path);
   }
 
   function focusTarget(selector) {
@@ -2480,9 +2592,10 @@
     const anchored = !threadSplit.unanchored.some((t) => t.id === firstUnresolved.id);
     if (anchored) {
       if (tab !== "files") goToTab("files");
-      if (collapsedFiles.has(firstUnresolved.path)) {
-        const file = files.find((item) => item.path === firstUnresolved.path);
-        if (file) setFileViewed(file, false);
+      if (organizationCollapsed.has(firstUnresolved.path)) {
+        collapsedFiles = new Set([...collapsedFiles].filter(path => path !== firstUnresolved.path));
+        saveCollapsedFiles();
+        if (organizationEnabled) void organizationPanel?.revealFile(firstUnresolved.path, false);
       }
       revealAnchoredReply(firstUnresolved.path, firstUnresolved.id);
     } else {
@@ -2718,6 +2831,10 @@
   });
 
   function selectFile(i) {
+    if (organizationEnabled && files[i]) {
+      openChangedFile(files[i].path);
+      return;
+    }
     fileIndex = i;
     scrollToFile(i);
   }
@@ -2728,6 +2845,14 @@
   }
 
   function openChangedFile(path) {
+    if (organizationEnabled) {
+      if (workspaceEnabled) workspace?.openFile(path, false, { rev: organizationComparison.head, base: organizationComparison.base, side: 'right' });
+      else navigateReview({ file: path, line: null, side: 'right', view: 'diff', search: undefined });
+      return;
+    }
+    revealChangedFile(path);
+  }
+  function revealChangedFile(path, line = null, side = 'right') {
     const i = files.findIndex((f) => f.path === path);
     if (i < 0) {
       if (organizationEnabled && comparisonFiles.some(file => file.path === path)) void organizationPanel?.revealFile(path);
@@ -2737,7 +2862,10 @@
     if (tab !== "files") goToTab("files");
     let tries = 20;
     const reveal = () => {
-      if (fileSection(i)) scrollToFile(i);
+      if (fileSection(i)) {
+        scrollToFile(i);
+        if (line) requestAnimationFrame(() => fileSection(i)?.querySelector(`[data-${side === 'left' ? 'old' : 'new'}-line="${line}"]`)?.scrollIntoView({ block: 'center' }));
+      }
       else if (--tries > 0) requestAnimationFrame(reveal);
     };
     requestAnimationFrame(reveal);
@@ -2758,7 +2886,13 @@
   }
 
   function selectRange(key) {
-    if (finishFileEdit()) rangeKey = key;
+    if (finishFileEdit()) {
+      rangeKey = key;
+      if (organizationEnabled) {
+        // Range selection resolves synchronously from captured commit metadata.
+        queueMicrotask(() => navigateReview({ rev: range?.head ?? pr.headRefOid, base: range?.base ?? pr.baseRefOid, panes: undefined, active: undefined }));
+      }
+    }
   }
 
   let telescope = $state(null);
@@ -2792,6 +2926,7 @@
     let downPressed = false;
     let upPressed = false;
     function onKey(e) {
+      if (isReviewFileDragging()) return;
       if (e.defaultPrevented) return;
       const keyOwner = prKeyOwner(e);
       if (keyOwner === "blur") {
@@ -3075,7 +3210,7 @@
   {#if error}
     <div class="load">{error}</div>
   {:else if pr}
-    <div class="detail-frame" class:conversation-tab={tab === "conversation"} class:files-tab={tab === "files"}>
+    <div class="detail-frame" class:code-first={organizationEnabled && tab === "files"} class:conversation-tab={tab === "conversation"} class:files-tab={tab === "files"}>
     <div class="detail" style="--tree-width: {treeWidth}px">
       <header class="pr-head">
         <div class="pr-head-top">
@@ -3457,12 +3592,21 @@
               {/if}
             </div>
             <div class="toolbar-left">
+              {#if organizationEnabled}
+                <span class="viewed-sync" role="status">{viewedSnapshot.matches('loading') ? 'Reading GitHub Viewed…' : viewedSnapshot.matches('saving') ? 'Saving Viewed…' : viewedSnapshot.matches('error') ? 'Viewed sync failed' : viewedAligned ? `GitHub · ${githubViewed.account.login} · ${viewedFiles.size}/${githubViewed.files.length} viewed` : 'Viewed belongs to a different revision'}</span>
+                {#if viewedSnapshot.matches('error')}<span class="viewed-error" role="alert" title={viewedSnapshot.context.error}>{viewedSnapshot.context.error}</span>{/if}
+                <button class="toolbar-btn" disabled={viewedSnapshot.matches('saving') || viewedSnapshot.matches('loading')} onclick={() => viewedActor.send({ type: 'REFRESH' })}>Refresh Viewed</button>
+              {/if}
               {#if !organizationEnabled && files.length && diffState === "ready"}
                 <button class="toolbar-btn shortcut-action" onclick={toggleExcludedFiles}>
                   {fileFilterLabels[fileFilter]} <Kbd keys="x" />
                 </button>
               {/if}
-              <button class="toolbar-btn" onclick={toggleDiffLayout}>{prefs.diffLayout === "split" ? "unified" : "side by side"}</button>
+              {#if organizationEnabled}
+                <div class="diff-layout-options" aria-label="Diff layout"><button class="toolbar-btn" aria-pressed={reviewState.layout === 'unified'} onclick={() => workspaceEnabled ? workspace?.updatePane(reviewState.active, { layout: 'unified' }) : navigateReview({ layout: 'unified' })}>Unified</button><button class="toolbar-btn" aria-pressed={reviewState.layout === 'split'} onclick={() => workspaceEnabled ? workspace?.updatePane(reviewState.active, { layout: 'split' }) : navigateReview({ layout: 'split' })}>Split</button></div>
+                <button class="toolbar-btn" onclick={() => openBeside(selectedPath ?? files[0]?.path)} disabled={!files.length}>Open beside</button>
+                {#if workspaceEnabled}<a class="toolbar-btn" href={`https://github.com/${repo}/pull/${number}`} target="_blank" rel="noopener noreferrer">GitHub PR</a><button class="toolbar-btn" onclick={() => workspace?.addView("files")}>Files pane</button><button class="toolbar-btn" onclick={() => workspace?.addView("related")}>Related pane</button><button class="toolbar-btn" onclick={() => workspace?.resetLayout()}>Reset layout</button><button class="toolbar-btn" onclick={() => navigateReview({ panes: undefined, active: undefined })}>Single view</button>{/if}
+              {:else}<button class="toolbar-btn" onclick={toggleDiffLayout}>{prefs.diffLayout === "split" ? "unified" : "side by side"}</button>{/if}
             </div>
           </div>
           <aside class="tree-pane">
@@ -3471,13 +3615,14 @@
               {#if pr.changedFiles > 0}<span class="fcount">{diffState === "ready" ? treeFiles.length : pr.changedFiles}</span>{/if}
             </div>
             {#if organizationEnabled && diffState === "ready" && comparisonFiles.length}
-              <ReviewOrganization bind:this={organizationPanel} comparison={organizationComparison} nativeFiles={comparisonFiles} {selectedPath} onChange={receiveOrganization} onSelect={openChangedFile} />
+              <ReviewOrganization bind:this={organizationPanel} comparison={organizationComparison} nativeFiles={comparisonFiles} {selectedPath} onChange={receiveOrganization} onSelect={openChangedFile} onOpenBeside={openBeside} docking={workspaceEnabled} fileHref={path => buildReviewHash(repo, number, { ...reviewState, file: path, view: "diff", line: null, rev: organizationComparison.head, base: organizationComparison.base })} restoredControls={reviewState.controls} onControlsChange={(controls, mode) => navigateReview({ controls }, mode)} />
             {:else}
               <FileTree files={treeFiles} {selectedPath} hoveredPath={hoveredDiffPath} onSelect={selectFileByPath} onContextMenu={prefs.reviewFileMenuEnabled ? openFileMenu : null} />
             {/if}
           </aside>
           <div class="tree-resizer" role="separator" aria-orientation="vertical" onpointerdown={startTreeResize}></div>
           <div class="diff-pane">
+            {#if organizationEnabled && !workspaceEnabled && reviewState.view === 'diff' && reviewState.file && diffState === 'ready' && !comparisonFiles.some(file => file.path === reviewState.file)}<div class="diff-status" role="alert">The requested file has no diff in this comparison: {reviewState.file}. Select another file or open its source.</div>{/if}
             {#if churnBaseRef && rangeKey === "since" && diffState === "ready"}
               <div class="churn-note">Merged in <span class="mono">{churnBaseRef}</span> since your visit — its churn is hidden, showing only this PR's changes</div>
             {/if}
@@ -3488,12 +3633,18 @@
               </div>
             {:else if diffState === "building"}
               <div class="diff-status">Preparing diff…</div>
-            {:else if files.length === 0}
+            {:else if files.length === 0 && !workspaceEnabled}
               <div class="diff-status">{organizationEnabled && comparisonFiles.length ? "No visible files match. Use Show all or clear the file search." : "No changes in this range."}</div>
             {:else}
+              {#if workspaceEnabled}
+                <ReviewWorkspace bind:this={workspace} availableFiles={comparisonFiles.map(file => file.path)} identity={`${repo}#${number}`} locations={reviewState.panes} active={reviewState.active} onChange={workspaceChanged} content={workspacePane} />
+              {:else}
               <DiffView
                 bind:this={diffView}
                 {files}
+                {number}
+                enhancedReview={organizationEnabled}
+                viewedDisabled={organizationEnabled && (!viewedSnapshot.matches("ready") || !viewedAligned || rangeKey !== "all")}
                 onWarmFile={warmDiffFile}
                 onReleaseFile={releaseDiffFile}
                 onReadFile={(path) => diffDocument?.read(path)}
@@ -3502,6 +3653,7 @@
                 collapsed={organizationCollapsed}
                 onToggleFile={toggleFileCollapse}
                 {repo}
+                dismissedViewed={organizationEnabled && viewedAligned ? new Set(githubViewed.files.filter(file => file.state === "DISMISSED").map(file => file.path)) : new Set()}
                 viewed={viewedFiles}
                 onToggleViewed={(file) => setFileViewed(file, !viewedFiles.has(file.path))}
                 onHoverFile={(path) => (hoveredDiffPath = path)}
@@ -3522,13 +3674,14 @@
                 base={pr.baseRefName}
                 onOpenHistory={openFileHistory}
                 historyShortcutPath={files[fileIndex]?.path}
-                onLookupDefinition={(symbol, fromPath, position) => telescope?.openDefinition(symbol, fromPath, position)}
+                onLookupDefinition={organizationEnabled ? followDefinition : (symbol, fromPath, position) => telescope?.openDefinition(symbol, fromPath, position)}
                 editable={fileEditable}
                 onCommitFileEdit={commitFileEdit}
                 onGenerateCommitMessage={(path, hunk) => generateCommitMessage(repo, number, path, hunk)}
                 onFinishExternalEdit={finishExternalEdit}
-                layout={prefs.diffLayout}
+                layout={organizationEnabled ? reviewState.layout : prefs.diffLayout}
               />
+              {/if}
             {/if}
           </div>
         </div>
@@ -4426,7 +4579,7 @@
       <KeyBar keys={tab === "files" ? filesKeys : tab === "agents" || tab === "actions" ? tabKeys : conversationKeys} />
     {/if}
 
-    <Telescope bind:this={telescope} {repo} headSha={pr.headRefOid} headRef={pr.headRefName} fileFilter={organizationEnabled ? "all" : fileFilter} changedFiles={organizationEnabled ? comparisonFiles : files} onOpenChangedFile={openChangedFile} onOpenHistory={openFileHistory} bind:open={telescopeOpen} />
+    <Telescope bind:this={telescope} reviewLocation={organizationEnabled ? workspaceEnabled ? { ...reviewState, view: 'diff' } : reviewState : null} onReviewNavigate={organizationEnabled ? navigatePane : null} {repo} headSha={organizationEnabled ? searchRevision : pr.headRefOid} definitionContext={organizationEnabled ? definitionContext : null} headRef={pr.headRefName} fileFilter={organizationEnabled ? "all" : fileFilter} changedFiles={organizationEnabled ? workspaceEnabled && searchRevision !== organizationComparison.head ? [] : comparisonFiles : files} onOpenChangedFile={openChangedFile} onOpenHistory={openFileHistory} bind:open={telescopeOpen} />
     <FileHistory
       {repo}
       path={historyPath}
@@ -4502,7 +4655,106 @@
   </div>
 {/if}
 
+{#snippet workspacePane(pane)}
+  {@const paneFile = comparisonFiles.find(file => file.path === pane.file)}
+  <section class="workspace-pane" data-pane-id={pane.id} aria-label={pane.view === 'files' ? 'Changed files view' : pane.view === 'related' ? 'Related files view' : pane.file ?? 'Review pane'} onfocusin={() => workspace?.focusPane(pane.id)} onpointerdown={() => workspace?.focusPane(pane.id)}>
+    <div class="pane-toolbar">
+      {#if !['files', 'related'].includes(pane.view)}<button aria-pressed={pane.view === 'diff'} onclick={() => workspace?.updatePane(pane.id, { view: 'diff' })}>Diff</button><button aria-pressed={pane.view === 'source'} onclick={() => workspace?.updatePane(pane.id, { view: 'source' })}>Source</button>
+      <button aria-pressed={pane.layout === 'unified'} onclick={() => workspace?.updatePane(pane.id, { layout: 'unified' })}>Unified</button>
+      <button aria-pressed={pane.layout === 'split'} onclick={() => workspace?.updatePane(pane.id, { layout: 'split' })}>Split</button>
+      <button onclick={() => workspace?.openFile(pane.file, true)}>Open beside</button>{/if}
+      <details><summary>Move</summary><div class="pane-moves"><button onclick={() => workspace?.movePane(pane.id, 'left')}>Move left</button><button onclick={() => workspace?.movePane(pane.id, 'right')}>Move right</button><button onclick={() => workspace?.movePane(pane.id, 'top')}>Move above</button><button onclick={() => workspace?.movePane(pane.id, 'bottom')}>Move below</button><button onclick={() => workspace?.movePane(pane.id, 'center')}>Group as tab</button></div></details>
+      <button aria-label={`Close ${pane.view === 'files' ? 'files view' : pane.view === 'related' ? 'related view' : pane.file ?? 'pane'}`} onclick={() => workspace?.closePane(pane.id)}>×</button>
+    </div>
+    <div class="workspace-scroll">
+      {#if pane.view === 'source'}
+        <WorkspaceSource {repo} {pane} headRef={pr.headRefName} onNavigate={patch => workspace?.updatePane(pane.id, patch)} onDefinition={(symbol, path, position) => followDefinition(symbol, path, position, pane)} />
+      {:else if pane.view === 'files'}
+        <p class="workspace-help">Drag a file or tab to an edge to split; drop in the center to group.</p>
+        {#each comparisonFiles as candidate}<button class="workspace-file-link" draggable="false" onpointerdown={event => beginReviewFileDrag(event, { file: candidate.path, rev: organizationComparison.head, base: organizationComparison.base, view: 'diff' })} onclick={() => workspace?.openFile(candidate.path, false, { rev: organizationComparison.head, base: organizationComparison.base, side: 'right' })}>{candidate.path}</button>{/each}
+      {:else if pane.view === 'related'}
+        {@const selected = organization?.entries.find(entry => entry.file.filename === (pane.file ?? reviewState.file))}
+        {@const candidates = selected && organization?.graph ? relatedCandidates(selected.file, organization.entries.map(entry => entry.file), organization.graph) : []}
+        <p class="workspace-help">Related to {pane.file ?? reviewState.file ?? 'the selected file'}. Changed-path reference evidence.</p>
+        {#each candidates as candidate}<button class="workspace-file-link" onclick={() => workspace?.openFile(candidate.file.filename, false, { rev: organizationComparison.head, base: organizationComparison.base, side: 'right' })}>{candidate.file.filename}<small>{candidate.reason}</small></button>{:else}<p>No changed-file references available for this file.</p>{/each}
+      {:else}
+        <WorkspaceDiff {repo} {number} {pane} comparison={organizationComparison} currentFile={paneFile} currentResources={{ identity: displayedDiffKey, warm: warmDiffFile, release: releaseDiffFile, read: path => diffDocument?.read(path) }}>
+          {#snippet content(paneFile, resources)}
+              {#key `${resources.identity}:${paneFile.path}`}
+              <DiffView
+                files={[paneFile]}
+                {number}
+                enhancedReview={organizationEnabled}
+                showPrLink={false}
+                viewedDisabled={!viewedSnapshot.matches("ready") || !viewedAligned || (pane.rev && pane.rev !== pr.headRefOid) || (pane.base && pane.base !== pr.baseRefOid)}
+                onWarmFile={resources.warm}
+                onReleaseFile={resources.release}
+                onReadFile={resources.read}
+                anchored={threadSplit.anchored}
+                {threadProps}
+                collapsed={organizationCollapsed}
+                onToggleFile={toggleFileCollapse}
+                {repo}
+                dismissedViewed={organizationEnabled && viewedAligned ? new Set(githubViewed.files.filter(file => file.state === "DISMISSED").map(file => file.path)) : new Set()}
+                viewed={viewedFiles}
+                onToggleViewed={(file) => setFileViewed(file, !viewedFiles.has(file.path), { head: pane.rev ?? organizationComparison.head, base: pane.base ?? organizationComparison.base })}
+                onHoverFile={(path) => (hoveredDiffPath = path)}
+                headSha={pane.rev ?? organizationComparison.head}
+                diffIdentity={resources.identity}
+                {pendingInline}
+                {pendingReview}
+                {pendingReviewMutations}
+                pendingReviewsEnabled={prefs.pendingReviewsEnabled}
+                {pendingReviewStale}
+                commentable={commentable && (!pane.rev || pane.rev === pr.headRefOid) && (!pane.base || pane.base === pr.baseRefOid)}
+                onInlineComment={submitInlineComment}
+                onStageInlineComment={stageInlineComment}
+                onEditPendingComment={editPendingComment}
+                onDeletePendingComment={deletePendingComment}
+                onRetryMutation={handleRetry}
+                onDiscardMutation={handleDiscard}
+                base={pr.baseRefName}
+                onOpenHistory={openFileHistory}
+                historyShortcutPath={files[fileIndex]?.path}
+                onLookupDefinition={(symbol, path, position) => followDefinition(symbol, path, position, pane)}
+                editable={fileEditable}
+                onCommitFileEdit={commitFileEdit}
+                onGenerateCommitMessage={(path, hunk) => generateCommitMessage(repo, number, path, hunk)}
+                onFinishExternalEdit={finishExternalEdit}
+                layout={pane.layout}
+              />
+              {/key}
+          {/snippet}
+        </WorkspaceDiff>
+      {/if}
+    </div>
+  </section>
+{/snippet}
+
 <style>
+  .code-first .pr-head { padding-top: 4px; padding-bottom: 4px; margin-bottom: 4px; }
+  .code-first .pr-title-copy { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 2px 12px; }
+  .code-first .pr-title-copy .ui-eyebrow { margin-bottom: 0; font-size: 10px; }
+  .code-first .pr-title-row h1 { margin-bottom: 0; }
+  .code-first .sub { grid-column: 1 / -1; }
+  .detail-frame.code-first.files-tab .tabs { margin-bottom: 6px; padding-block: 4px; }
+  @media (max-width: 700px) { .code-first .pr-title-copy { grid-template-columns: minmax(0, 1fr); } }
+  .code-first .pr-head h1 { font-size: 17px; line-height: 1.3; }
+  .code-first .pr-metrics, .code-first .pr-head-foot { display: none; }
+
+  .viewed-sync { font-size: 11px; color: var(--muted); }
+  .viewed-error { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--red); font-size: 11px; }
+  .workspace-help { font-size: 11px; color: var(--muted); padding: 8px; }
+  .workspace-file-link small { display: block; color: var(--muted); }
+  .workspace-file-link { display: block; text-align: left; font-size: 11px; margin: 6px; overflow-wrap: anywhere; }
+  .workspace-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  .workspace-scroll { overflow: auto; min-height: 0; flex: 1; padding: 4px; }
+  .pane-toolbar { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 6px; border-bottom: 1px solid var(--border); align-items: center; font-size: 11px; }
+  .pane-toolbar button { padding: 3px 6px; white-space: nowrap; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+  .pane-toolbar [aria-pressed="true"], .diff-layout-options [aria-pressed="true"] { background: var(--surface-hover, #263f58); color: var(--text); }
+  .pane-moves { position: absolute; z-index: 5; background: var(--surface, #20262e); padding: 8px; display: grid; }
+  .diff-layout-options { display: flex; gap: 2px; }
+
   .page {
     height: var(--general-height);
     overflow-y: auto;

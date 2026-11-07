@@ -1,5 +1,8 @@
 <script>
   import { tick, untrack } from "svelte";
+  import { createActor } from "xstate";
+  import { reviewSearchMachine } from "./reviewSearch.js";
+  import { history as browserHistory, goBack as browserBack, goForward as browserForward } from "./history.svelte.js";
   import { repoSearch, repoFiles, repoFile, repoDefinition } from "./api.js";
   import { isPromptDialogOpen } from "./dom.js";
   import { langForPath } from "./highlight.js";
@@ -16,7 +19,7 @@
   import { columnWithin, createDefinitionHover, tokenAtPoint, wordAtPoint } from "./wordAtPoint.js";
 
   // With `hotkeys` off, Cmd+P and Cmd+Shift+F only switch modes once open; the owner opens it through `activate`.
-  let { repo, headSha, headRef, context = "", fileFilter = "all", changedFiles = [], onOpenChangedFile, onOpenHistory = null, onBack = null, hotkeys = true, open = $bindable(false) } = $props();
+  let { repo, headSha, headRef, context = "", fileFilter = "all", changedFiles = [], onOpenChangedFile, onOpenHistory = null, onBack = null, reviewLocation = null, onReviewNavigate = null, definitionContext = null, hotkeys = true, open = $bindable(false) } = $props();
 
   const definitionHover = createDefinitionHover(() => view);
   $effect(() => () => definitionHover.destroy());
@@ -58,7 +61,6 @@
   const SNIPPET_BATCH_LINES = 300;
   const PREVIEW_MAX_HIGHLIGHT_LINES = 5000;
   const MAX_FETCH_RETRIES = 15;
-  const MIN_SEARCH_QUERY = 2;
   // a snippet row shows about this many characters; a match beyond them leads with an ellipsis
   const SNIPPET_VISIBLE_CHARS = 32;
   const SNIPPET_LEAD_CHARS = 10;
@@ -159,11 +161,25 @@
     };
   });
 
+  let mounted = true;
+  let sourceGeneration = 0;
+  let definitionController = null;
+  $effect(() => () => {
+    mounted = false;
+    sourceGeneration++;
+    filesToken = null;
+    defToken = null;
+    definitionController?.abort();
+  });
+
   let cacheSource = untrack(() => `${repo}\0${headSha}`);
   $effect(() => {
     const source = `${repo}\0${headSha}`;
     if (source === cacheSource) return;
     cacheSource = source;
+    sourceGeneration++;
+    defToken = null;
+    definitionController?.abort();
     filesToken = null;
     generatedPaths = new Set();
     previews = new Map();
@@ -195,34 +211,97 @@
     } else if (mode !== nextMode) {
       resetList(nextMode);
     }
+    publishSearch();
     await tick();
     inputEl?.focus();
     inputEl?.select();
   }
 
+  function publishSearch() {
+    if (onReviewNavigate && (mode === "files" || mode === "search")) onReviewNavigate({ search: { mode, query } }, "replace");
+  }
+
+  function updateQuery(value) {
+    query = value;
+    publishSearch();
+  }
+
+  let restoredCodeKey = null;
+  let restoredSearchKey = null;
+  $effect(() => {
+    if (!onReviewNavigate || !reviewLocation) return;
+    const location = reviewLocation;
+    const codeKey = JSON.stringify([repo, headSha, location.file, location.line, location.side, location.view]);
+    const searchKey = location.search ? JSON.stringify(location.search) : null;
+    const priorCodeKey = restoredCodeKey;
+    const priorSearchKey = restoredSearchKey;
+    restoredCodeKey = codeKey;
+    restoredSearchKey = searchKey;
+    untrack(() => {
+      if (codeKey !== priorCodeKey) {
+        if (location.view === "source" && location.file) {
+          open = true;
+          view = { path: location.file, line: location.line ?? null };
+          if (filesStatus !== "ok") loadFiles();
+          void openFile();
+        } else if (priorCodeKey !== null) {
+          close(false);
+        }
+      }
+      if (searchKey !== priorSearchKey) {
+        if (location.search) {
+          mode = location.search.mode;
+          query = location.search.query;
+          selected = 0;
+          open = true;
+          fileOpen = false;
+          if (filesStatus !== "ok") loadFiles();
+        } else if (priorSearchKey !== null && location.view !== "source") {
+          close(false);
+        }
+      }
+    });
+  });
+
   function leaveDefs() {
     activate(defsReturnMode);
   }
 
-  function close() {
+  function close(publish = true) {
+    defToken = null;
+    definitionController?.abort();
+    if (publish && onReviewNavigate) onReviewNavigate({ search: undefined }, "replace");
     open = false;
     fileOpen = false;
+    previews = new Map([...previews].filter(([, entry]) => entry.status !== "loading"));
   }
 
   async function openFile() {
     fileOpen = true;
     findOpen = false;
     await tick();
-    editorEl?.focus({ preventScroll: true });
+    if (mounted && open && fileOpen) editorEl?.focus({ preventScroll: true });
   }
 
   // back to the results, previewing the selected one again
   async function closeFile() {
     fileOpen = false;
+    publishSearch();
     previewedSelectionKey = null;
     await tick();
     inputEl?.focus();
   }
+
+  let wasOpen = untrack(() => open);
+  $effect(() => {
+    const nowOpen = open;
+    if (wasOpen && !nowOpen) {
+      defToken = null;
+      definitionController?.abort();
+      untrack(() => { previews = new Map([...previews].filter(([, entry]) => entry.status !== "loading")); });
+    }
+    wasOpen = nowOpen;
+  });
 
   let filesToken;
   async function loadFiles(attempt = 0) {
@@ -250,47 +329,21 @@
     }
   }
 
-  let searchToken;
+  const searchActor = createActor(reviewSearchMachine, { input: {
+    search: ({ repo: sourceRepo, sha, headRef: sourceRef, query: q, signal }) => repoSearch(sourceRepo, sha, sourceRef, q, signal),
+  } });
   $effect(() => {
-    if (!open || mode !== "search") return;
-    const q = query.trim();
-    // too-short queries match a huge chunk of the repo — never send them; the cleanup below aborts any in-flight one
-    if (q.length < MIN_SEARCH_QUERY) {
-      matches = [];
-      searchStatus = "ok";
-      return;
-    }
-    const token = {};
-    searchToken = token;
-    const controller = new AbortController();
-    const run = async (attempt = 0) => {
-      try {
-        const res = await repoSearch(repo, headSha, headRef, q, controller.signal);
-        if (searchToken !== token) return;
-        if (res.status === "ok") {
-          matches = res.matches;
-          matchedQuery = q;
-          searchStatus = "ok";
-          selected = 0;
-        } else if (res.status === "fetching" && attempt < MAX_FETCH_RETRIES) {
-          searchStatus = "fetching";
-          setTimeout(() => searchToken === token && run(attempt + 1), 800);
-        } else {
-          matches = [];
-          searchStatus = res.status === "fetching" ? "not-found" : res.status;
-        }
-      } catch (err) {
-        if (searchToken === token && err?.name !== "AbortError") {
-          matches = [];
-          searchStatus = "error";
-        }
-      }
-    };
-    const timer = setTimeout(run, 100);
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
+    const subscription = searchActor.subscribe(({ context: result }) => {
+      matches = result.matches;
+      matchedQuery = result.matchedQuery;
+      searchStatus = result.status;
+      selected = 0;
+    });
+    searchActor.start();
+    return () => { subscription.unsubscribe(); searchActor.stop(); };
+  });
+  $effect(() => {
+    searchActor.send({ type: "SEARCH", repo, sha: headSha, headRef, query, enabled: open && mode === "search" });
   });
 
   async function ensurePreview(path) {
@@ -298,22 +351,31 @@
     const next = new Map(previews);
     next.set(path, { status: "loading" });
     previews = next;
+    const sourceRepo = repo;
+    const sourceHead = headSha;
+    const sourceRef = headRef;
+    const generation = sourceGeneration;
+    const loading = previews.get(path);
+    const valid = () => mounted && open && generation === sourceGeneration && repo === sourceRepo && headSha === sourceHead && previews.get(path) === loading;
     let entry;
     try {
-      const res = await repoFile(repo, headSha, headRef, path);
+      const res = await repoFile(sourceRepo, sourceHead, sourceRef, path);
+      if (!valid()) return;
       if (res.status !== "ok") {
         entry = { status: "missing" };
       } else {
         const lines = res.content.split("\n");
         entry = { status: "ready", lines, tokens: null };
-        void colourPreview(path, entry);
       }
     } catch {
+      if (!valid()) return;
       entry = { status: "missing" };
     }
+    if (!valid()) return;
     const after = new Map(previews);
     after.set(path, entry);
     previews = after;
+    if (entry.status === "ready") void colourPreview(path, entry);
   }
 
   // The file shows at once; its colours follow from the highlight worker, which can take a
@@ -322,7 +384,7 @@
     const lang = langForPath(path);
     if (!lang || entry.lines.length > PREVIEW_MAX_HIGHLIGHT_LINES) return;
     const tokens = await tokenizeCodeBlock(entry.lines.join("\n"), lang, theme.shiki).catch(() => null);
-    if (!tokens || previews.get(path) !== entry) return;
+    if (!mounted || !tokens || previews.get(path) !== entry) return;
     const after = new Map(previews);
     after.set(path, { ...entry, tokens });
     previews = after;
@@ -363,6 +425,10 @@
 
   function navigateTo(loc) {
     view = { path: loc.path, line: loc.line ?? null };
+    if (onReviewNavigate) {
+      onReviewNavigate({ file: loc.path, line: loc.line ?? null, side: "right", view: "source", search: undefined }, "push");
+      return;
+    }
     const top = hist[histIndex];
     if (top && top.path === view.path && top.line === view.line) return;
     hist = [...hist.slice(0, histIndex + 1), view];
@@ -370,12 +436,14 @@
   }
 
   function goBack() {
+    if (onReviewNavigate) { browserBack(); return; }
     if (histIndex <= 0) return;
     histIndex -= 1;
     view = hist[histIndex];
   }
 
   function goForward() {
+    if (onReviewNavigate) { browserForward(); return; }
     if (histIndex >= hist.length - 1) return;
     histIndex += 1;
     view = hist[histIndex];
@@ -395,7 +463,7 @@
     selected = index;
     if (r.changed) {
       onOpenChangedFile(r.path);
-      close();
+      close(false);
       return;
     }
     navigateTo({ path: r.path, line: r.line ?? null });
@@ -404,11 +472,20 @@
 
   let defToken;
   async function lookupDefinition(symbol, fromPath, ensureOpen = false, position = null) {
+    definitionController?.abort();
+    const controller = new AbortController();
+    definitionController = controller;
+    const lookupContext = definitionContext;
     const token = {};
     defToken = token;
+    const sourceRepo = repo;
+    const sourceHead = headSha;
+    const sourceRef = headRef;
+    const generation = sourceGeneration;
+    const valid = () => mounted && definitionContext === lookupContext && defToken === token && !controller.signal.aborted && sourceGeneration === generation && repo === sourceRepo && headSha === sourceHead && (open || ensureOpen);
     try {
-      const res = await repoDefinition(repo, headSha, headRef, fromPath, symbol, position);
-      if (defToken !== token || (!open && !ensureOpen)) return;
+      const res = await repoDefinition(sourceRepo, sourceHead, sourceRef, fromPath, symbol, position, controller.signal);
+      if (!valid()) return;
       if (res.status !== "ok") {
         showFlash(res.status === "fetching" ? "repo still fetching…" : `definition lookup: ${res.status}`);
         return;
@@ -427,7 +504,7 @@
         showFlash(`no definition for ${symbol}`);
       }
     } catch {
-      if (defToken === token) showFlash("definition lookup failed");
+      if (valid()) showFlash("definition lookup failed");
     }
   }
 
@@ -548,6 +625,7 @@
           class="ts-input mono"
           bind:this={inputEl}
           bind:value={query}
+          oninput={(event) => updateQuery(event.currentTarget.value)}
           placeholder={mode === "search" ? "Search in files…" : "Go to file…"}
           spellcheck="false"
           autocomplete="off"
@@ -596,13 +674,13 @@
     </div>
     <div class="ts-main">
       <div class="ts-bar">
-        <button class="ts-nav shortcut" disabled={histIndex <= 0} onclick={goBack} title="Back" aria-label="Back">
+        <button class="ts-nav shortcut" disabled={onReviewNavigate ? !browserHistory.canBack : histIndex <= 0} onclick={goBack} title="Back" aria-label="Back">
           <span aria-hidden="true">←</span>
-          {#if histIndex > 0}<Kbd keys={["cmd", "["]} />{/if}
+          {#if onReviewNavigate ? browserHistory.canBack : histIndex > 0}<Kbd keys={["cmd", "["]} />{/if}
         </button>
-        <button class="ts-nav shortcut" disabled={histIndex >= hist.length - 1} onclick={goForward} title="Forward" aria-label="Forward">
+        <button class="ts-nav shortcut" disabled={onReviewNavigate ? !browserHistory.canForward : histIndex >= hist.length - 1} onclick={goForward} title="Forward" aria-label="Forward">
           <span aria-hidden="true">→</span>
-          {#if histIndex < hist.length - 1}<Kbd keys={["cmd", "]"]} />{/if}
+          {#if onReviewNavigate ? browserHistory.canForward : histIndex < hist.length - 1}<Kbd keys={["cmd", "]"]} />{/if}
         </button>
         <span class="ts-loc" title={view?.path}>
           {#if view}{view.path}{#if view.line != null}:{view.line}{/if}{:else}no file{/if}
@@ -613,7 +691,7 @@
         {#if fileOpen}
           <FileFind bind:this={fileFind} bind:open={findOpen} root={editorEl} lines={preview?.status === "ready" ? preview.lines : []} revision={preview} />
         {/if}
-        <button class="ts-nav shortcut" onclick={fileOpen ? closeFile : close} title={fileOpen ? "Back to results" : "Close"} aria-label={fileOpen ? "Back to results" : "Close"}>
+        <button class="ts-nav shortcut" onclick={() => fileOpen ? closeFile() : close()} title={fileOpen ? "Back to results" : "Close"} aria-label={fileOpen ? "Back to results" : "Close"}>
           <span aria-hidden="true">✕</span>
           <Kbd keys="esc" />
         </button>

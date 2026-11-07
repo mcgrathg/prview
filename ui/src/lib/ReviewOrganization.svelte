@@ -5,9 +5,10 @@
   import { captureFromDiff } from '../../../shared/review-organization/capture.ts';
   import { organizationModel, emptyGraph } from '../../../shared/review-organization/model.ts';
   import { roleLabels } from '../../../shared/review-organization/analysis.ts';
+  import { beginReviewFileDrag } from './reviewFileDrag.js';
   import { relatedCandidates } from '../../../shared/review-organization/relationships.ts';
 
-  let { comparison, nativeFiles, selectedPath, onChange, onSelect } = $props();
+  let { comparison, nativeFiles, selectedPath, onChange, onSelect, onOpenBeside = null, docking = false, fileHref = null, onControlsChange = null, restoredControls = null } = $props();
   const actor = createActor(organizationMachine, { input: { comparison: untrack(() => comparison) } });
   let snapshot = $state(actor.getSnapshot());
   const subscription = actor.subscribe(next => snapshot = next);
@@ -22,7 +23,7 @@
   let graph = $derived(aligned && controls.result ? controls.result.graph : emptyGraph());
   let model = $derived(organizationModel(capture, graph, controls));
   $effect(() => {
-    const next = { ...model, key: organizationKey(comparison) };
+    const next = { ...model, graph, key: organizationKey(comparison) };
     if (aligned) untrack(() => onChange(next));
   });
   let selected = $derived(model.entries.find(entry => entry.file.filename === selectedPath));
@@ -35,7 +36,20 @@
   let groups = $derived(controls.folders
     ? [...new Set(shownEntries.map(entry => entry.file.directory))].map(name => ({ name, entries: shownEntries.filter(entry => entry.file.directory === name) }))
     : [{ name: '', entries: shownEntries }]);
-  const send = event => actor.send(event);
+  export function restoreControls(controls) { actor.send({ type: 'CONTROLS.RESTORE', controls }); }
+  let restoredKey = '';
+  $effect(() => {
+    const key = JSON.stringify([organizationKey(comparison), restoredControls]);
+    if (restoredControls && key !== restoredKey) { restoredKey = key; untrack(() => restoreControls(restoredControls)); }
+  });
+  const send = event => {
+    const before = actor.getSnapshot().context;
+    actor.send(event);
+    const { order, query, rules, overrides, root, expanded, folders } = actor.getSnapshot().context;
+    const previous = { order: before.order, query: before.query, rules: before.rules, overrides: before.overrides, root: before.root, expanded: before.expanded, folders: before.folders };
+    const next = { order, query, rules, overrides, root, expanded, folders };
+    if (JSON.stringify(previous) !== JSON.stringify(next)) onControlsChange?.(next, event.type === 'QUERY.SET' ? 'replace' : 'push');
+  };
   async function select(path) {
     send({ type: 'FILE.SET', path, visibility: controls.overrides[path] === 'hide' ? 'show' : controls.overrides[path] });
     if (model.folded.includes(path)) send({ type: 'FILE.TOGGLE', path });
@@ -43,16 +57,20 @@
     onSelect(path);
   }
   async function reveal(path) { send({ type: 'FILE.SET', path, visibility: 'show' }); await tick(); onSelect(path); }
-  export async function revealFile(path) { send({ type: 'QUERY.SET', query: '' }); await reveal(path); }
+  export async function revealFile(path, notify = true) {
+    if (notify) { send({ type: 'QUERY.SET', query: '' }); await reveal(path); }
+    else { actor.send({ type: 'QUERY.SET', query: '' }); actor.send({ type: 'FILE.SET', path, visibility: 'show' }); await tick(); }
+  }
   export function toggleTests() { send({ type: 'ROLE.SET', role: 'test', visibility: controls.rules.test === 'hide' ? 'show' : 'hide' }); }
   export function toggleFold(path) { send({ type: 'FILE.TOGGLE', path }); }
 </script>
 
 {#snippet queueEntry(entry)}
-        <button class="queue-file" class:active={entry.file.filename === selectedPath} class:folded={entry.state === 'fold'} title={`${entry.file.filename}\n${entry.reason}`} aria-current={entry.file.filename === selectedPath ? 'true' : undefined} data-event="organization-select-file" onclick={() => select(entry.file.filename)}>
+        <a href={fileHref?.(entry.file.filename) ?? "#"} class="queue-file" class:active={entry.file.filename === selectedPath} class:folded={entry.state === 'fold'} title={`${entry.file.filename}\n${entry.reason}`} aria-current={entry.file.filename === selectedPath ? 'true' : undefined} data-event="organization-select-file" draggable={!docking && Boolean(onOpenBeside)} onpointerdown={event => { if (docking) beginReviewFileDrag(event, { file: entry.file.filename, rev: comparison.head, base: comparison.base, view: 'diff' }); }} ondragstart={event => { event.dataTransfer.setData('application/x-prview-file', JSON.stringify({ file: entry.file.filename, rev: comparison.head, base: comparison.base, view: 'diff' })); event.dataTransfer.effectAllowed = 'copy'; }} onclick={event => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return; event.preventDefault(); select(entry.file.filename); }}>
           <span class="rank">{entry.rank}</span><span class="path"><strong>{entry.file.name}</strong><small>{entry.file.directory}</small></span>
           <span class="count">{entry.state === 'fold' ? 'fold' : entry.file.changes}</span>
-        </button>
+        </a>
+        {#if onOpenBeside}<button class="open-beside" aria-label={`Open ${entry.file.name} beside`} title="Open in a new pane beside the active file" onclick={() => onOpenBeside(entry.file.filename)}>Open beside</button>{/if}
 {/snippet}
 
 <div class="organization" aria-label="Review organization">
@@ -100,10 +118,10 @@
       <button class="follow" disabled={!graph.edges.some(edge => edge.from === selected.file.filename && edge.kind !== 'file_path' && !edge.typeOnly)} onclick={() => send({ type: 'FLOW.FOLLOW', path: selected.file.filename })}>Follow imports from this file</button>
       {#if related.length}<strong class="related-label">Related changed files</strong>{/if}
       {#each related as candidate (candidate.file.filename)}
-        <button class="related" title={candidate.file.filename} data-event="organization-related-file" onclick={() => reveal(candidate.file.filename)}>
+        <a href={fileHref?.(candidate.file.filename) ?? "#"} class="related" title={candidate.file.filename} data-event="organization-related-file" onclick={event => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return; event.preventDefault(); reveal(candidate.file.filename); }}>
           <strong>{candidate.file.name}</strong><small>{candidate.reason}</small>
           {#if candidate.edges[0]?.evidence[0]}<small>Source line {candidate.edges[0].evidence[0].line} · {candidate.edges[0].resolution.replaceAll('_', ' ')}</small>{/if}
-        </button>
+        </a>
       {/each}
     </details>
   {/if}
@@ -132,6 +150,8 @@
 </div>
 
 <style>
+  a.queue-file, a.related { text-decoration: none; color: inherit; }
+  .open-beside { margin: -3px 0 6px 24px; font-size: 10px; color: var(--muted); }
   .organization { padding: 10px 8px 24px; font-size: 12px; color: var(--text); }
   .organization-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
   label { display:flex; gap:6px; align-items:center; justify-content:space-between; margin:8px 0; }

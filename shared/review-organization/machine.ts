@@ -16,6 +16,7 @@ interface Context extends Controls {
 }
 type Event =
   | { type: 'COMPARISON.SET'; comparison: Comparison }
+  | { type: 'CONTROLS.RESTORE'; controls: Controls }
   | { type: 'RETRY' | 'SHOW_ALL' | 'GROUP.TOGGLE' }
   | { type: 'ORDER.SET'; order: OrganizationOrder }
   | { type: 'QUERY.SET'; query: string }
@@ -44,6 +45,7 @@ export const organizationMachine = setup({
   id: 'organization', initial: 'loading',
   context: ({ input }) => ({ ...defaultControls(), comparison: input.comparison, result: null, error: null }),
   on: {
+    'CONTROLS.RESTORE': { actions: assign(({ event }) => ({ ...event.controls })) },
     'COMPARISON.SET': {
       guard: ({ context, event }) => organizationKey(context.comparison) !== organizationKey(event.comparison),
       target: '.loading', reenter: true,

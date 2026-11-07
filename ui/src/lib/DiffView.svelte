@@ -1,5 +1,5 @@
 <script>
-  import { flushSync, tick, untrack } from "svelte";
+  import { flushSync, onDestroy, tick, untrack } from "svelte";
   import { KeyedMap, KeyedSet } from "./keyedState.svelte.js";
   import Thread from "./Thread.svelte";
   import MutationBadge from "./MutationBadge.svelte";
@@ -19,6 +19,10 @@
   import Kbd from "./Kbd.svelte";
   import { registerFindSource } from "./FindBar.svelte";
   import GithubSetupModal from "./GithubSetupModal.svelte";
+  import MarkdownComposer from "./MarkdownComposer.svelte";
+  import { reviewDraftKey } from "./reviewDrafts.js";
+  import { reviewCodeDrafts } from "./reviewCodeDrafts.js";
+  import { reviewPrGithubHref, githubReviewAnchor } from "./reviewGithubLinks.js";
 
   let {
     files,
@@ -31,9 +35,14 @@
     collapsed,
     onToggleFile,
     viewed = new Set(),
+    dismissedViewed = new Set(),
     onToggleViewed = null,
     onHoverFile = null,
     repo,
+    number = null,
+    enhancedReview = false,
+    showPrLink = true,
+    viewedDisabled = false,
     headSha,
     pendingInline,
     onInlineComment,
@@ -79,7 +88,14 @@
   let copiedPath = $state(null);
   let copiedTimer;
   let fileEditor = $state(null);
+  let fileDraftNotice = $state("");
   let fileEditRequest;
+  onDestroy(() => {
+    if (fileEditor?.draftTarget) {
+      fileEditRequest = null;
+      fileEditor = null;
+    }
+  });
   let editMenu = $state(null);
   let editMenuRequest = 0;
   let githubSetup = $state(null);
@@ -126,10 +142,13 @@
   // deleted rows (no head position) so lookup falls back to symbol-only.
   function linePosition(lineEl, token) {
     const newNum = Number(lineEl.dataset.newLine);
+    const oldNum = Number(lineEl.dataset.oldLine);
+    const side = Number.isInteger(newNum) && newNum > 0 ? 'right' : 'left';
+    const line = side === 'right' ? newNum : oldNum;
     const code = lineEl.querySelector(".code");
-    if (!code || !Number.isInteger(newNum) || newNum <= 0) return null;
+    if (!code || !Number.isInteger(line) || line <= 0) return null;
     const character = columnWithin(code, token);
-    return character == null ? null : { line: newNum, character };
+    return character == null ? null : { line, character, side };
   }
 
   function onCodeMouseDown(e, file) {
@@ -183,7 +202,7 @@
   }
 
   function onViewedKey(event) {
-    if (!onToggleViewed || !shouldToggleHoveredViewed(event, "files", hoveredFilePath)) return;
+    if (viewedDisabled || !onToggleViewed || !shouldToggleHoveredViewed(event, "files", hoveredFilePath)) return;
     const file = files.find((candidate) => candidate.path === hoveredFilePath);
     const head = hoveredFileSection?.querySelector(".file-head-row");
     if (!file || !head) return;
@@ -490,10 +509,21 @@
       path: file.path,
       side: target.side,
       line: target.line,
+      ...(enhancedReview ? { repo, number, headSha } : {}),
       ...(start ? { startLine: start.line, startSide: start.side } : {}),
     };
     submitError = "";
     draft = "";
+  }
+
+  async function submitEnhancedComment(comment, mode) {
+    if (comment.repo !== repo || comment.number !== number || comment.headSha !== headSha) {
+      throw new Error("The PR revision changed. Reopen the comment on the current revision.");
+    }
+    const { repo: _repo, number: _number, ...payload } = comment;
+    const submit = mode === "staged" ? onStageInlineComment : onInlineComment;
+    if (!submit) throw new Error("This comment action is unavailable.");
+    await submit(payload);
   }
 
   function cancelInline() {
@@ -1013,6 +1043,23 @@
     ].join("\n");
   }
 
+  function saveFileEditDraft(editor = fileEditor) {
+    if (!editor?.draftTarget || editor.phase === "loading" || editor.phase === "error") return;
+    editor.draftError = reviewCodeDrafts.write(editor.draftTarget, editor);
+  }
+
+  function updateFileEditContent(content) {
+    if (!fileEditor || typeof content !== "string") return;
+    fileEditor.content = content;
+    saveFileEditDraft();
+  }
+
+  function updateFileEditMessage(message) {
+    if (!fileEditor || typeof message !== "string") return;
+    fileEditor.message = message;
+    saveFileEditDraft();
+  }
+
   async function suggestCommitMessage() {
     if (!fileEditor || fileEditor.phase !== "review" || fileEditor.message.trim() || !onGenerateCommitMessage) return;
     const editor = fileEditor;
@@ -1024,7 +1071,10 @@
     try {
       const message = await onGenerateCommitMessage(editor.path, fileEditHunk(span));
       if (fileEditor !== editor) return;
-      if (!editor.message.trim()) editor.message = message;
+      if (!editor.message.trim()) {
+        editor.message = message;
+        saveFileEditDraft(editor);
+      }
       editor.suggestionPhase = "ready";
     } catch (error) {
       if (fileEditor !== editor) return;
@@ -1062,17 +1112,22 @@
     if (!editable || file.isBinary || file.isDeleted || fileEditor || !placement) return;
     const token = {};
     fileEditRequest = token;
+    fileDraftNotice = "";
+    const draftTarget = enhancedReview ? { repo, number, path: file.path, headSha } : null;
+    const savedDraft = draftTarget && !change ? reviewCodeDrafts.read(draftTarget) : null;
     fileEditor = {
       path: file.path,
       expectedHeadOid: headSha,
+      draftTarget,
+      draftError: "",
       eol: "\n",
       original: "",
       content: "",
-      message: change?.message ?? "",
+      message: change?.message ?? savedDraft?.message ?? "",
       externalSessionId: change?.externalSessionId ?? null,
       phase: "loading",
       error: null,
-      suggestionPhase: change?.message ? "ready" : "idle",
+      suggestionPhase: change?.message || savedDraft?.message ? "ready" : "idle",
       suggestionError: null,
       suggestionCode: null,
       ...placement,
@@ -1088,12 +1143,15 @@
       } else {
         fileEditor = {
           ...fileEditor,
-          eol: change?.eol ?? normalized.eol,
+          eol: change?.eol ?? savedDraft?.eol ?? normalized.eol,
           original: normalized.content,
-          content: change ? change.apply(normalized.content) : normalized.content,
+          content: change ? change.apply(normalized.content) : savedDraft?.content ?? normalized.content,
           phase: change ? "review" : "editing",
         };
-        if (change) void suggestCommitMessage();
+        if (change) {
+          saveFileEditDraft();
+          void suggestCommitMessage();
+        }
       }
       fileEditRequest = null;
     } catch (error) {
@@ -1103,9 +1161,16 @@
     }
   }
 
-  async function discardFileEdit() {
+  async function discardFileEdit(clearDraft = true) {
     if (fileEditor?.phase === "committing") return;
     const editor = fileEditor;
+    if (clearDraft && editor?.draftTarget) {
+      const error = reviewCodeDrafts.discard(editor.draftTarget);
+      if (error) {
+        editor.draftError = error;
+        return;
+      }
+    }
     fileEditRequest = null;
     if (editor?.externalSessionId) await onFinishExternalEdit?.(editor.externalSessionId);
     if (fileEditor === editor) fileEditor = null;
@@ -1114,11 +1179,11 @@
   export function finishFileEdit() {
     if (!fileEditor) return true;
     if (fileEditor.phase === "loading" || fileEditor.phase === "error") {
-      discardFileEdit();
+      discardFileEdit(false);
       return true;
     }
     if (fileEditor.phase === "editing" && !fileEditSpan) {
-      discardFileEdit();
+      discardFileEdit(false);
       return true;
     }
     if (fileEditor.phase === "editing") reviewFileEdit();
@@ -1230,11 +1295,19 @@
       return;
     }
     const editor = fileEditor;
+    if (editor.draftTarget && (editor.draftTarget.repo !== repo || editor.draftTarget.number !== number
+      || editor.expectedHeadOid.toLowerCase() !== headSha?.toLowerCase())) {
+      editor.error = "The PR revision changed. This saved edit still targets its original revision; reopen that revision before committing.";
+      return;
+    }
+    const submitted = { content: editor.content, message: editor.message, eol: editor.eol };
+    saveFileEditDraft(editor);
     editor.phase = "committing";
     editor.error = null;
     try {
       const content = editor.eol === "\r\n" ? editor.content.replace(/\n/g, "\r\n") : editor.content;
       await onCommitFileEdit(editor.path, editor.expectedHeadOid, content, message);
+      if (editor.draftTarget) fileDraftNotice = reviewCodeDrafts.committed(editor.draftTarget, submitted);
       if (fileEditor === editor) fileEditor = null;
       if (editor.externalSessionId) await onFinishExternalEdit?.(editor.externalSessionId);
     } catch (error) {
@@ -1968,6 +2041,9 @@
     return out;
   }
 </script>
+{#if enhancedReview && showPrLink && reviewPrGithubHref(repo, number)}
+  <div class="review-github-handoff"><a href={reviewPrGithubHref(repo, number)} target="_blank" rel="noopener noreferrer">Open PR on GitHub</a></div>
+{/if}
 {#if githubSetup}
   <GithubSetupModal initialStatus={githubSetup} onReady={finishGithubSetup} onClose={() => (githubSetup = null)} />
 {/if}
@@ -2023,7 +2099,11 @@
           <div class="md">{@html renderMarkdown(m.payload.body)}</div>
         </div>
       {/each}
-      {#if openKey === key}
+      {#if openKey === key && enhancedReview}
+        {#key reviewDraftKey(openCtx)}
+          <MarkdownComposer target={openCtx} currentHead={headSha} {pendingReviewsEnabled} {pendingReview} {pendingReviewStale} onSubmit={submitEnhancedComment} onClose={cancelInline} />
+        {/key}
+      {:else if openKey === key}
         <div class="compose">
           <textarea
             placeholder={openCtx?.startLine ? `Comment on lines ${openCtx.startLine}–${target.line}…` : `Comment on line ${target.line}…`}
@@ -2050,6 +2130,12 @@
       {/if}
     </div>
   {/if}
+{/snippet}
+
+{#snippet reviewLineNumber(file, line, side)}
+  {#if enhancedReview && line && reviewPrGithubHref(repo, number)}
+    <a class="ln github-line" href={reviewPrGithubHref(repo, number) + "/files"} use:githubReviewAnchor={{ repo, number, path: file.path, side, start: line, end: line }} target="_blank" rel="noopener noreferrer" aria-label={`Open ${side === "LEFT" ? "original" : "changed"} line ${line} on GitHub`}>{line}</a>
+  {:else}<span class="ln">{line ?? ""}</span>{/if}
 {/snippet}
 
 {#snippet lineRow(file, row, hunkIndex)}
@@ -2080,8 +2166,8 @@
         onclick={(event) => event.detail === 0 && openComposer(file, target)}
       >+</button>
     {/if}
-    <span class="ln">{row.oldNum ?? ""}</span>
-    <span class="ln">{row.newNum ?? ""}</span>
+    {@render reviewLineNumber(file, row.oldNum, "LEFT")}
+    {@render reviewLineNumber(file, row.newNum, "RIGHT")}
     <span class="sign">{row.type === "add" ? "+" : row.type === "del" ? "−" : " "}</span>
     <span class="code">{@render codeContent(row)}</span>
   </div>
@@ -2118,7 +2204,7 @@
           onclick={(event) => event.detail === 0 && openComposer(file, target)}
         >+</button>
       {/if}
-      <span class="ln">{side === "left" ? row.oldNum ?? "" : row.newNum ?? ""}</span>
+      {@render reviewLineNumber(file, side === "left" ? row.oldNum : row.newNum, side === "left" ? "LEFT" : "RIGHT")}
       <span class="sign">{row.type === "add" ? "+" : row.type === "del" ? "−" : " "}</span>
       <span class="code">{@render codeContent(row)}</span>
     {:else}
@@ -2169,6 +2255,7 @@
 {/snippet}
 
 <div class="diff" class:file-editing={!!fileEditor} bind:this={diffEl}>
+  {#if enhancedReview && fileDraftNotice}<div class="file-edit-error" role="status">{fileDraftNotice}</div>{/if}
   {#each renderedFiles as indexedFile (indexedFile.path)}
     {@const file = hydratedFiles.get(indexedFile.path) ?? indexedFile}
     {@const isCollapsed = collapsed.has(file.path)}
@@ -2234,16 +2321,21 @@
           <div class="file-editor-actions file-editor-header-actions">
             {#if fileEditor.phase === "editing"}
               <button class="cbtn" onclick={finishFileEdit}>{fileEditSpan ? "Review changes" : "Close"}</button>
+              {#if enhancedReview}<button class="cbtn ghost" onclick={() => discardFileEdit()}>Discard draft</button>{/if}
             {:else if fileEditor.phase === "loading" || fileEditor.phase === "error"}
-              <button class="cbtn ghost" onclick={discardFileEdit}>Close</button>
+              <button class="cbtn ghost" onclick={() => discardFileEdit(false)}>Close</button>
             {/if}
           </div>
         {:else if !isCollapsed && editable && !file.isBinary && !file.isDeleted && !file.isUnchangedRename}
           <button class="whole-btn file-edit-btn" onclick={(event) => startFileEdit(file, toolbarEditPlacement(event.currentTarget))}>Edit</button>
         {/if}
+        {#if enhancedReview && reviewPrGithubHref(repo, number)}
+          <a class="whole-btn" href={reviewPrGithubHref(repo, number) + "/files"} use:githubReviewAnchor={{ repo, number, path: file.path }} target="_blank" rel="noopener noreferrer">GitHub</a>
+        {/if}
         {#if onToggleViewed}
           <button
             class="viewed-btn"
+            disabled={viewedDisabled}
             class:active={isViewed}
             aria-pressed={isViewed}
             aria-label={isViewed ? "Mark file unviewed" : "Mark file viewed"}
@@ -2252,6 +2344,7 @@
             <span class="viewed-check" aria-hidden="true">{isViewed ? "✓" : ""}</span>
             <span class="viewed-label">Viewed</span>
           </button>
+          {#if enhancedReview && dismissedViewed.has(file.path)}<span class="viewed-dismissed" role="status">Changed since viewed</span>{/if}
         {/if}
         {#if !isCollapsed && !file.isBinary && !file.isDeleted && !file.isUnchangedRename}
           <button class="whole-btn" disabled={whole?.status === "loading"} onclick={() => toggleWholeFile(file)}>
@@ -2287,7 +2380,7 @@
             <div class="file-editor-body">
               <CodeEditor
                 path={file.path}
-                bind:content={fileEditor.content}
+                bind:content={() => fileEditor?.content ?? "", updateFileEditContent}
                 initialLine={fileEditor.line}
                 initialColumn={fileEditor.column}
                 rowOffset={fileEditor.rowOffset}
@@ -2296,7 +2389,7 @@
                 onFinish={finishFileEdit}
               />
             </div>
-            {#if fileEditor.error}<div class="file-edit-error file-editor-overlay-error" role="alert">{fileEditor.error}</div>{/if}
+            {#if fileEditor.error || fileEditor.draftError}<div class="file-edit-error file-editor-overlay-error" role="alert">{fileEditor.error || fileEditor.draftError}</div>{/if}
           </div>
         {:else}
           <div class="file-editor file-edit-review">
@@ -2317,7 +2410,7 @@
                 {#if fileEditor.suggestionPhase === "generating"}<span class="hint">Generating with Haiku…</span>{/if}
               </span>
               <input
-                bind:value={fileEditor.message}
+                bind:value={() => fileEditor?.message ?? "", updateFileEditMessage}
                 maxlength="200"
                 placeholder={fileEditor.suggestionPhase === "generating" ? "Generating…" : ""}
                 disabled={fileEditor.phase === "committing"}
@@ -2332,15 +2425,16 @@
                 </span>
               {/if}
             </label>
-            {#if fileEditor.error}
-              <div class="file-edit-error" role="alert">{fileEditor.error}</div>
+            {#if fileEditor.error || fileEditor.draftError}
+              <div class="file-edit-error" role="alert">{fileEditor.error || fileEditor.draftError}</div>
             {/if}
+            {#if enhancedReview && !fileEditor.draftError}<div class="file-edit-draft-status" role="status">Code draft saved on this device. Reopen Edit at this revision to resume.</div>{/if}
             <div class="file-editor-actions">
               <button class="cbtn ghost" disabled={fileEditor.phase === "committing"} onclick={returnToFileEdit}>Back</button>
               <button class="cbtn primary" disabled={fileEditor.phase === "committing" || !fileEditor.message.trim()} onclick={commitFileEdit}>
                 {fileEditor.phase === "committing" ? "Committing…" : "Commit to PR"}
               </button>
-              <button class="cbtn ghost" disabled={fileEditor.phase === "committing"} onclick={discardFileEdit}>Ignore changes</button>
+              <button class="cbtn ghost" disabled={fileEditor.phase === "committing"} onclick={() => discardFileEdit()}>Ignore changes</button>
             </div>
           </div>
         {/if}
@@ -2453,6 +2547,12 @@
 </div>
 
 <style>
+  .viewed-dismissed, .file-edit-draft-status { color: var(--text-dim); font-size: 12px; }
+  .file-edit-draft-status { padding: 0 12px 8px; }
+
+  .github-line { text-decoration: none; }
+  .github-line:hover { text-decoration: underline; }
+  .review-github-handoff { font-size: 12px; margin: 8px 0; }
   .diff {
     min-width: 0;
     max-width: 100%;
