@@ -4717,7 +4717,7 @@
                 onOpenHistory={openFileHistory}
                 historyShortcutPath={files[fileIndex]?.path}
                 onLookupDefinition={(symbol, path, position) => followDefinition(symbol, path, position, pane)}
-                editable={fileEditable}
+                editable={fileEditable && (!pane.rev || pane.rev === pr.headRefOid) && (!pane.base || pane.base === pr.baseRefOid)}
                 onCommitFileEdit={commitFileEdit}
                 onGenerateCommitMessage={(path, hunk) => generateCommitMessage(repo, number, path, hunk)}
                 onFinishExternalEdit={finishExternalEdit}
