@@ -65,3 +65,13 @@ test('implementation snippets are bounded and disclose shortening',()=>{
   const result=insightAt(source(files),{path:'contract.ts',kind:'implementation',symbol:'Handler',line:1,character:18,candidatePaths:Object.keys(files)});
   expect(result.locations[0]?.text).toHaveLength(8000);expect(result.limited).toBe(true);
 });
+
+test('dependency facts parse static import and re-export statements without matching comments',()=>{
+ const text="// import {wrong} from './wrong';\nimport type {Contract} from './contract';\nexport {helper} from './helper';\nconst message=\"import './not-code'\";";
+ const result=insightAt(source({'module.ts':text}),{path:'module.ts',kind:'imports',line:1,character:0});
+ expect(result.imports?.map(item=>[item.specifier,item.line])).toEqual([['./contract',2],['./helper',3]]);
+});
+
+test('overlong module identifiers are omitted rather than resolved using a different truncated path',()=>{
+ const long='./'+'d/'.repeat(1020)+'aaaaaax';const result=insightAt(source({'module.ts':`import '${long}';`}),{path:'module.ts',kind:'imports',line:1,character:0});expect(result.imports).toEqual([]);expect(result.limited).toBe(true);
+});

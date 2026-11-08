@@ -1,4 +1,4 @@
-const KINDS=new Set(['files','text','symbols','references','type','implementation']);
+const KINDS=new Set(['files','text','symbols','references','type','implementation','neighborhood']);
 export function normalizeRepositoryBrowser(value,location,legacySearch='',normalizeLocation) {
   const input=value && typeof value==='object' && !Array.isArray(value) ? value : {};
   return {open:input.open===true,kind:KINDS.has(input.kind) ? input.kind : legacySearch ? 'text' : 'files',

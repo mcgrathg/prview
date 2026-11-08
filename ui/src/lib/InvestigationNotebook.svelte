@@ -22,6 +22,7 @@
     await tick();if(snapshot.context.selected!==before)noteInput?.focus();
   }
   function ensureFinding(){if(!selected)send({type:'CREATE',question:question?.title ?? 'Review',investigationId:question?.id,target:anchor});}
+  export function addFinding(body,evidence=[],origin=question,target=anchor){const before=snapshot.context.selected;show();send({type:'CREATE',question:origin?.title ?? 'Review',investigationId:origin?.id,target});if(snapshot.context.selected===before)return;send({type:'EDIT',body});for(const item of evidence)if(item)send({type:'EVIDENCE',evidence:item});}
   export function saveEvidence(evidence){show();if(!evidence){draftError='Wait for loaded source before saving its evidence.';return;}draftError='';ensureFinding();send({type:'EVIDENCE',evidence});}
   export function saveCheckpoint(){show();ensureFinding();if(checkpoint)send({type:'CHECKPOINT',checkpoint});}
   async function prepareDraft() {

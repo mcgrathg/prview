@@ -3,13 +3,13 @@ import {lsTree} from './gitShow.ts';
 import type {InsightKind} from './tsService.ts';
 export interface InsightQuery {repo:string;sha:string;headRef:string;path:string;kind:string;symbol:string;line:number;character:number}
 export interface InsightRequest extends InsightQuery {kind:InsightKind}
-const KINDS=new Set(['hover','outline','type','implementation']);
+const KINDS=new Set(['hover','outline','type','implementation','imports']);
 export function validInsightRequest(value:InsightQuery):value is InsightRequest {
   return /^[\w-][\w.-]*\/[\w-][\w.-]*$/.test(value.repo) && /^[a-f0-9]{40}$/i.test(value.sha)
     && /^[A-Za-z0-9._][A-Za-z0-9._\/-]{0,255}$/.test(value.headRef) && Boolean(value.path) && value.path.length<=2048
     && !/[\x00-\x1f\x7f\\]/.test(value.path) && !value.path.startsWith('/') && !value.path.split('/').some(part=>!part || part==='.' || part==='..')
     && KINDS.has(value.kind) && Number.isSafeInteger(value.line) && value.line>0 && Number.isSafeInteger(value.character) && value.character>=0
-    && (value.kind==='outline' || /^[A-Za-z_$][A-Za-z0-9_$]{0,199}$/.test(value.symbol));
+    && (['outline','imports'].includes(value.kind) || /^[A-Za-z_$][A-Za-z0-9_$]{0,199}$/.test(value.symbol));
 }
 export async function repositoryInsight(checkout:string,request:InsightRequest,signal?:AbortSignal) {
   if(!validInsightRequest(request))throw new Error('Invalid repository insight request.');

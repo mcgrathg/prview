@@ -4,7 +4,8 @@
   import { createInvestigationSession } from './investigationSession.js';
   import { symbolDestination } from './symbolContext.js';
   import { sourceLocation } from './investigationState.js';
-  import { repoDefinition } from './api.js';
+  import {discoveryEvidence} from './repositoryNeighborhood.js';
+  import { repoDefinition,repoFile } from './api.js';
   import {createRepositoryResearch} from './repositoryResearch.js';
   import RepositoryNavigator from './RepositoryNavigator.svelte';
   import InvestigationNotebook from './InvestigationNotebook.svelte';
@@ -82,6 +83,15 @@
     browserSet({kind,origin,query:'',filter:'',symbol,character},true);await tick();navigator?.focus();
   }
   async function closeBrowser(){send({type:'BROWSER.CLOSE'});await tick();mainSource?.focus();}
+  const evidenceRequests=new Set();
+  $effect(()=>()=>{for(const request of evidenceRequests)request.abort();});
+  async function saveDiscovery(entry,request){
+    const controller=new AbortController(),origin={id:working.id,title:working.title},target=draftAnchor?{...draftAnchor}:null,owner=notebook;evidenceRequests.add(controller);
+    try{
+      const evidence=await discoveryEvidence({repo,entry,request,signal:controller.signal,readFile:(path,rev,signal)=>repoFile(repo,rev,headRef,path,signal)});
+      if(!controller.signal.aborted)owner?.addFinding(`${entry.category}: ${entry.reason}`,evidence,origin,target);
+    }catch(error){if(!controller.signal.aborted)commandError=error.message;}finally{evidenceRequests.delete(controller);}
+  }
   function resultLocation(entry,request){return sourceLocation({file:entry.path,line:entry.line,rev:request.rev,base:request.base});}
   function sourceCommand(kind,location){void openBrowser(kind,location);}
   const editorEscapes=new WeakSet();
@@ -108,7 +118,7 @@
 {#if active && working}
 <div style:top={`${overlayTop}px`} class="investigation-workbench" data-investigation-workbench data-code-overlay onkeydowncapture={captureKeydown} onkeydown={keydown} role="region" aria-label={`Investigation ${working.title}`}>
   <header><button onclick={returnReview}>← Return to review</button><input aria-label="Investigation question" bind:this={titleInput} value={working.title} oninput={event=>send({type:'TITLE',title:event.currentTarget.value},'replace')} /><span>{working.location.rev.slice(0,8)}</span><button onclick={promote}>Promote to main</button><button onclick={event=>start(event,working.preview?.location ?? working.location)}>Explore in side tab</button><button aria-label="Close current investigation" onclick={()=>closeQuestion(working.id)}>×</button></header>
-  <div class="investigation-tools"><button disabled={working.cursor===0} onclick={()=>send({type:'HISTORY.BACK'})}>Back in investigation</button><button disabled={working.cursor===working.history.length-1} onclick={()=>send({type:'HISTORY.FORWARD'})}>Forward</button><button onclick={()=>inspect(working.location,working.location.rev,working.location.base)}>Inspect source</button><button aria-pressed={working.browser.open} title="Find file · ⌘P; search repository · ⌘⇧F" onclick={()=>openBrowser('files')}>Repository</button><button onclick={()=>openBrowser('text')}>Search text</button><span>Private workspace</span></div>
+  <div class="investigation-tools"><button disabled={working.cursor===0} onclick={()=>send({type:'HISTORY.BACK'})}>Back in investigation</button><button disabled={working.cursor===working.history.length-1} onclick={()=>send({type:'HISTORY.FORWARD'})}>Forward</button><button onclick={()=>inspect(working.location,working.location.rev,working.location.base)}>Inspect source</button><button aria-pressed={working.browser.open} title="Find file · ⌘P; search repository · ⌘⇧F" onclick={()=>openBrowser('files')}>Repository</button><button onclick={()=>openBrowser('text')}>Search text</button><button onclick={()=>openBrowser('neighborhood')}>Patterns</button><span>Private workspace</span></div>
   {#if lookup?.matches('loading') || lookup?.matches('retrying')}<p role="status">Looking up {lookup.context.request.symbol}… <button onclick={()=>send({type:'LOOKUP.CANCEL'})}>Cancel lookup</button></p>
   {:else if lookup?.matches('error') || lookup?.matches('unavailable')}<p role="alert">{lookup.context.error || 'This lookup is unavailable for the pinned source.'}<button onclick={()=>active.getSnapshot().children.lookup.send({type:'RETRY'})}>Retry lookup</button></p>
   {:else if lookup?.matches('empty')}<p role="status">No semantic locations found.</p>{/if}
@@ -118,7 +128,7 @@
       {#each working.pinned as pinned,index}<section><h2 title={pinned.file}>Kept beside · {pinned.file}<button onpointerdown={event=>event.preventDefault()} onclick={()=>notebook?.saveEvidence(pinnedSources[index]?.captureEvidence())}>Save evidence</button><button aria-label={`Close comparison ${pinned.file}`} onclick={()=>send({type:'UNPIN',index})}>×</button></h2><div class="workspace-scroll"><WorkspaceSource enhancedEditor onCommand={kind=>sourceCommand(kind,pinned)} onSemantic={(kind,symbol,path,position)=>lookupCode(kind,symbol,path,position,pinned)} bind:this={pinnedSources[index]} {repo} {headRef} onOpenSymbol={openSymbol} pane={pinned} onDefinition={(symbol,path,position)=>lookupCode('definition',symbol,path,position,pinned)} onReferences={(symbol,path,position)=>lookupCode('references',symbol,path,position,pinned)} /></div></section>{/each}
       {#if working.preview}<section class="investigation-preview" aria-label="Temporary code preview"><h2 title={working.preview.location.file}>Inspect · {working.preview.location.file}:{working.preview.location.line}</h2><div class="preview-actions"><button disabled={working.preview.trail.length<2} onclick={()=>send({type:'PREVIEW.BACK'})}>Preview back</button><button onclick={()=>send({type:'KEEP'})}>Keep beside</button><button onclick={closePreview}>Close preview</button><button onpointerdown={event=>event.preventDefault()} onclick={()=>notebook?.saveEvidence(previewSource?.captureEvidence())}>Save evidence</button></div><div class="workspace-scroll"><WorkspaceSource enhancedEditor onCommand={kind=>sourceCommand(kind,working.preview.location)} onSemantic={(kind,symbol,path,position)=>lookupCode(kind,symbol,path,position,working.preview.location)} bind:this={previewSource} {repo} {headRef} onOpenSymbol={openSymbol} pane={working.preview.location} onNavigate={patch=>inspect({...working.preview.location,...patch},working.preview.location.rev,working.preview.location.base)} onDefinition={(symbol,path,position)=>lookupCode('definition',symbol,path,position,working.preview.location)} onReferences={(symbol,path,position)=>lookupCode('references',symbol,path,position,working.preview.location)} /></div></section>{/if}
     </div>
-    {#if working.browser.open}<RepositoryNavigator bind:this={navigator} browser={working.browser} {research} {changedPaths} onSet={browserSet} onFilter={(filter,scope)=>send({type:'BROWSER.FILTER',filter,scope},'replace')} onClose={closeBrowser} onRetry={()=>active.getSnapshot().children.research.send({type:'RETRY'})} onInspect={(entry,request)=>inspect(entry,request.rev,request.base)} onOpen={(entry,request)=>send({type:'OPEN',location:resultLocation(entry,request)})} onBeside={(entry,request)=>send({type:'PIN',location:resultLocation(entry,request)})} />{/if}
+    {#if working.browser.open}<RepositoryNavigator bind:this={navigator} browser={working.browser} {research} {changedPaths} onSet={browserSet} onExplore={(entry,request)=>openBrowser('neighborhood',resultLocation(entry,request))} onSave={saveDiscovery} onFilter={(filter,scope)=>send({type:'BROWSER.FILTER',filter,scope},'replace')} onClose={closeBrowser} onRetry={()=>active.getSnapshot().children.research.send({type:'RETRY'})} onInspect={(entry,request)=>inspect(entry,request.rev,request.base)} onOpen={(entry,request)=>send({type:'OPEN',location:resultLocation(entry,request)})} onBeside={(entry,request)=>send({type:'PIN',location:resultLocation(entry,request)})} />{/if}
   </div>
   <footer>{working.preview ? 'Inspect is temporary. Keep beside pins a comparison; Promote makes it the working location.' : 'Click code for a symbol card; F12 inspects its definition; Alt-click for semantic references. Each question keeps its own history and previews.'}</footer>
 </div>

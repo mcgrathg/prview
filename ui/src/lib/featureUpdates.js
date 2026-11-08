@@ -71,6 +71,16 @@ export const FEATURE_UPDATES = [
       { title: 'Keep evidence precise', body: 'Selections save exact source ranges and immutable revisions to Findings. Native PR diffs, comments, Viewed and layout controls retain their existing behavior.' },
     ],
   },
+  {
+    version: 1794176253155,
+    title: 'Explore repository patterns and dependencies',
+    summary: 'Patterns opens a source-backed neighborhood around the current file, beyond the PR’s changed files.',
+    howToTry: 'In an investigation, choose Patterns. Inspect a dependency, test, comparable filename or repository guide. Explore expands from that candidate; Save evidence creates a private finding with pinned source excerpts.',
+    changes: [
+      { title: 'Reasons you can inspect', body: 'Dependencies come from parsed static imports and re-exports. Test, filename and guidance candidates explain their discovery hints; possible callers are explicitly labeled literal mentions.' },
+      { title: 'Keep the useful context', body: 'Expand outward without replacing your working file, filter changed or unchanged candidates, and save both the dependency and its importing statement as evidence. Limits and unresolved packages remain visible.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';

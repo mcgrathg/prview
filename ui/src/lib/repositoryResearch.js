@@ -1,4 +1,5 @@
 import {repoFiles,repoSearch,repoReferences,repoInsight} from './api.js';
+import {discoverNeighborhood} from './repositoryNeighborhood.js';
 import {fuzzyRank} from './fuzzy.js';
 function cache(map,key,value,limit){map.delete(key);map.set(key,value);if(map.size>limit)map.delete(map.keys().next().value);}
 export function flattenOutline(items,path,prefix=[]) {return (items ?? []).flatMap(item=>[{path,line:item.selection.line,text:[...prefix,item.name].join(' › ')},...flattenOutline(item.children,path,[...prefix,item.name])]);}
@@ -7,6 +8,7 @@ export function createRepositoryResearch({repo,headRef,api={repoFiles,repoSearch
   return async ({request,signal})=>{
     const {kind,rev,path,symbol,line,character,query=''}=request;
     signal.throwIfAborted();
+    if(kind==='neighborhood')return discoverNeighborhood({request,repo,headRef,api,signal});
     if(kind==='files') {
       const key=JSON.stringify([repo,rev]);let catalog=catalogs.get(key);
       if(!catalog){catalog=await api.repoFiles(repo,rev,headRef,signal);signal.throwIfAborted();if(catalog.status==='ok')cache(catalogs,key,catalog,8);}

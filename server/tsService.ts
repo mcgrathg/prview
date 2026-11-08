@@ -463,7 +463,7 @@ export function referencesAt(source: ShaSource, fromPath: string, symbol: string
   }
 }
 
-export type InsightKind = 'hover' | 'outline' | 'type' | 'implementation';
+export type InsightKind = 'hover' | 'outline' | 'type' | 'implementation' | 'imports';
 export interface InsightRange { line:number; character:number; endLine:number; endCharacter:number }
 export interface InsightOutline { name:string; kind:string; range:InsightRange; selection:InsightRange; children:InsightOutline[] }
 export interface AstInsight {
@@ -473,6 +473,7 @@ export interface AstInsight {
   outline:InsightOutline[];
   locations:AstDefinition[];
   limited:boolean;
+  imports?:{specifier:string;line:number;text:string}[];
 }
 export function insightAt(source:ShaSource,request:{path:string;kind:InsightKind;line:number;character:number;symbol?:string;candidatePaths?:string[]}):AstInsight {
   const {path:fromPath,kind,line,character,symbol='',candidatePaths=[]}=request;
@@ -494,6 +495,19 @@ export function insightAt(source:ShaSource,request:{path:string;kind:InsightKind
       const end=ts.getLineAndCharacterOfPosition(file,Math.min(span.start+span.length,file.text.length));
       return {line:start.line+1,character:start.character,endLine:end.line+1,endCharacter:end.character};
     };
+    if(kind==='imports') {
+      result.imports=[];
+      for(const statement of file.statements){
+        if(!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement))continue;
+        const specifier=statement.moduleSpecifier;if(!specifier || !ts.isStringLiteral(specifier))continue;
+        if(result.imports.length>=200){result.limited=true;break;}
+        const line=ts.getLineAndCharacterOfPosition(file,statement.getStart(file)).line+1;
+        if(specifier.text.length>2048){result.limited=true;continue;}
+        if(statement.getText(file).length>1000)result.limited=true;
+        result.imports.push({specifier:specifier.text,line,text:statement.getText(file).slice(0,1000)});
+      }
+      return result;
+    }
     if(kind==='outline') {
       let count=0;
       const items=(nodes:ts.NavigationTree[]=[]):InsightOutline[]=>{
