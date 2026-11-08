@@ -14,6 +14,7 @@
   import { normalizeFileEndings } from "./fileEndings.js";
   import { whenIdle } from "./preload.js";
   import { shouldToggleHoveredViewed } from "./dom.js";
+  import OpenInVscode from './OpenInVscode.svelte';
   import CommitContext from './CommitContext.svelte';
   import SymbolCard from './SymbolCard.svelte';
   import { symbolRequest } from './symbolContext.js';
@@ -2408,6 +2409,7 @@
         {#if enhancedReview && reviewPrGithubHref(repo, number)}
           <a class="whole-btn" href={reviewPrGithubHref(repo, number) + "/files"} use:githubReviewAnchor={{ repo, number, path: file.path }} target="_blank" rel="noopener noreferrer">GitHub</a>
         {/if}
+        {#if enhancedReview}<OpenInVscode {repo} path={file.path} />{/if}
         {#if onToggleViewed}
           <button
             class="viewed-btn"

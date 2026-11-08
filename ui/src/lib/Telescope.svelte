@@ -17,6 +17,7 @@
   import Kbd from "./Kbd.svelte";
   import FileFind from "./FileFind.svelte";
   import { matchRuns, positionRanges, queryRanges } from "./matchRuns.js";
+  import OpenInVscode from './OpenInVscode.svelte';
   import SymbolCard from './SymbolCard.svelte';
   import { symbolRequest } from './symbolContext.js';
   import CodeActionsMenu from "./CodeActionsMenu.svelte";
@@ -693,6 +694,7 @@
         <span class="ts-loc" title={view?.path}>
           {#if view}{view.path}{#if view.line != null}:{view.line}{/if}{:else}no file{/if}
         </span>
+        {#if directCodeLinks && fileOpen && view}<OpenInVscode {repo} path={view.path} line={view.line ?? 1} />{/if}
         {#if !(fileOpen && findOpen)}
           <span class="ts-hint">{directCodeLinks ? "Click → symbol card · Alt-click → references · drag to select" : "Ctrl/Cmd-click → definition"}{directCodeLinks ? " · right-click → code actions" : onOpenHistory ? " · right-click → mention history" : ""}</span>
         {/if}

@@ -103,6 +103,15 @@ export const FEATURE_UPDATES = [
       { title: 'Checked on another real PR', body: 'The integrated workflow retained independent questions, unchanged caller/type context, saved findings, browser history and existing draft text. Native diff layout, context expansion and Viewed controls remained available.' },
     ],
   },
+  {
+    version: 1794178598048,
+    title: 'Jump to a local file in VS Code',
+    summary: 'A small VS Code link is available in enhanced diff and source file controls.',
+    howToTry: 'Click VS Code in a file header or source toolbar. Enter the repository’s local checkout folder once, then use the link to open the local file. The adjacent ⋯ changes the folder.',
+    changes: [
+      { title: 'An occasional shortcut', body: 'The folder is remembered per repository in this browser. Source views carry their displayed line into the link. This opens the local working tree, which may differ from the PR revision; it does not switch branches.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';

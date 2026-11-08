@@ -4,6 +4,7 @@
   import { langForPath } from './highlight.js';
   import { tokenizeCodeBlock } from './offThreadHighlight.js';
   import { theme } from './theme.svelte.js';
+  import OpenInVscode from './OpenInVscode.svelte';
   import ReadonlySource from './ReadonlySource.svelte';
   import {sourceEvidence} from './sourceEvidence.js';
   import SymbolCard from './SymbolCard.svelte';
@@ -112,7 +113,7 @@
   }
 </script>
 <div tabindex="-1" class="source-file" class:editor-view={enhancedEditor && showEditor} bind:this={root} onclick={lookup} oncontextmenu={contextMenu} onmousemove={event => definitionHover.onMouseMove(event, event.target.closest(".source-code"))} onmouseleave={definitionHover.onMouseLeave} title="Click to inspect; Cmd/Ctrl-click to follow; Alt-click for references; right-click for code actions; drag to select code" role="region" aria-label={`Source ${pane.file}`}>
-  {#if enhancedEditor}<div class="source-tools" role="toolbar" aria-label="Source viewer"><button aria-pressed={showEditor} onclick={()=>showEditor=true}>Editor</button><button aria-pressed={!showEditor} onclick={()=>showEditor=false}>Text</button><button title="File symbols · ⌘⇧O" onclick={()=>onSemantic?.('outline','',pane.file,{line:1,character:0})}>Symbols</button><small>{(pane.side==='left' ? pane.base : pane.rev)?.slice(0,7)}</small></div>{/if}
+  {#if enhancedEditor}<div class="source-tools" role="toolbar" aria-label="Source viewer"><button aria-pressed={showEditor} onclick={()=>showEditor=true}>Editor</button><button aria-pressed={!showEditor} onclick={()=>showEditor=false}>Text</button><button title="File symbols · ⌘⇧O" onclick={()=>onSemantic?.('outline','',pane.file,{line:1,character:0})}>Symbols</button><OpenInVscode {repo} path={pane.file} line={pane.line ?? 1} /><small>{(pane.side==='left' ? pane.base : pane.rev)?.slice(0,7)}</small></div>{/if}
   {#if snapshot.matches('loading')}<p role="status">Loading pinned source…</p>
   {:else if snapshot.matches('error')}<p role="alert">{snapshot.context.error} <button onclick={() => actor.send({ type: 'LOAD', request: { repo, headRef, pane } })}>Retry source</button></p>
   {:else if enhancedEditor && showEditor}

@@ -10,6 +10,7 @@
   import { reviewNavigationMachine } from "./reviewNavigation.js";
   import { commitReviewLocation } from "./reviewHistory.js";
   import WorkspaceDiff from "./WorkspaceDiff.svelte";
+  import OpenInVscode from './OpenInVscode.svelte';
   import WorkspaceSource from "./WorkspaceSource.svelte";
   import ReviewWorkspace from "./ReviewWorkspace.svelte";
   import { isSetAside, putAside, bringBack } from "./setAside.svelte.js";
@@ -4823,6 +4824,7 @@
       <button aria-pressed={pane.layout === 'split'} onclick={() => workspace?.updatePane(pane.id, { layout: 'split' })}>Split</button>
       <button onclick={() => workspace?.openFile(pane.file, true)}>Open beside</button>{/if}
       <details><summary>Move</summary><div class="pane-moves"><button onclick={() => workspace?.movePane(pane.id, 'left')}>Move left</button><button onclick={() => workspace?.movePane(pane.id, 'right')}>Move right</button><button onclick={() => workspace?.movePane(pane.id, 'top')}>Move above</button><button onclick={() => workspace?.movePane(pane.id, 'bottom')}>Move below</button><button onclick={() => workspace?.movePane(pane.id, 'center')}>Group as tab</button></div></details>
+      {#if pane.view==='source' && pane.file}<OpenInVscode {repo} path={pane.file} line={pane.line ?? 1} />{/if}
       <button aria-label={`Close ${pane.view === 'files' ? 'files view' : pane.view === 'related' ? 'related view' : pane.file ?? 'pane'}`} onclick={() => workspace?.closePane(pane.id)}>×</button>
     </div>
     <div class="workspace-scroll">
