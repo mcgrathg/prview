@@ -1,0 +1,34 @@
+{
+  "outline": "Outline (0) · analysis 9.1 ms",
+  "samples": [
+    {
+      "bytes": 22227,
+      "disposedBefore": null,
+      "readyMs": 452.7,
+      "revision": "59c92708"
+    },
+    {
+      "bytes": 22227,
+      "disposedBefore": 0,
+      "readyMs": 124,
+      "revision": "3df9f383"
+    },
+    {
+      "bytes": 22227,
+      "disposedBefore": 0,
+      "readyMs": 46.6,
+      "revision": "3df9f383"
+    },
+    {
+      "bytes": 22227,
+      "disposedBefore": 0,
+      "readyMs": 46.6,
+      "revision": "3df9f383"
+    }
+  ],
+  "status": {
+    "models": 1,
+    "unchanged": true,
+    "uri": "prview://source/storybookjs/storybook/3df9f38353b4c6add739cdf7640abbaeca54c595/code/core/src/csf-tools/estree/ast.ts"
+  }
+}
