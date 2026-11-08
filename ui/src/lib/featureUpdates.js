@@ -92,6 +92,17 @@ export const FEATURE_UPDATES = [
       { title: 'Configuration stays honest', body: 'AI requires an existing supported provider key and model. The local verification machine has no provider configured, so live answers were not verified here.' },
     ],
   },
+  {
+    version: 1794177724614,
+    title: 'More code space and consistent investigation shortcuts',
+    summary: 'Active investigations use the available height and keep file/search commands inside the current workspace.',
+    howToTry: 'Open an investigation: its question strip moves to the top. Use Cmd/Ctrl+P for files or Cmd/Ctrl+Shift+F for repository text. Return to review restores the native diff.',
+    changes: [
+      { title: 'Code takes the space', body: 'The PR header stays underneath the active workspace. Switching questions, previews and results releases old editor resources cleanly.' },
+      { title: 'One owner for browsing', body: 'Active investigations suspend the legacy full-screen browser and keep keyboard commands and file-rail search in the repository panel. Closing results restores focus inside code.' },
+      { title: 'Checked on another real PR', body: 'The integrated workflow retained independent questions, unchanged caller/type context, saved findings, browser history and existing draft text. Native diff layout, context expansion and Viewed controls remained available.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';

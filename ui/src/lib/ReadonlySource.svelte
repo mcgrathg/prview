@@ -2,7 +2,7 @@
   import {tick,untrack} from 'svelte';
   import {theme} from './theme.svelte.js';
   let {repo,revision,base,headRef,path,content,line=1,onInspect,onDefinition,onReferences,onSemantic,onNavigate,onCommand,onFallback}=$props();
-  let container=$state(null),instance=$state(null),error=$state(''),analysis=$state(null),readyMs=$state(null);
+  let container=$state(null),instance=$state.raw(null),error=$state(''),analysis=$state(null),readyMs=$state(null);
   let generation=0;
   $effect(()=>{
     const source={repo,revision,base,headRef,path,content};const target=container;if(!target)return;
@@ -13,7 +13,7 @@
       active=untrack(()=>module.createReadonlySource(target,{...source,line,onInspect,onDefinition,onReferences,onSemantic,onNavigate,onCommand,onAnalysis:value=>{if(!disposed)analysis=value;}}));
       active.setTheme(theme.name);instance=active;readyMs=performance.now()-started;
     }).catch(failure=>{if(!disposed)error=failure.message ?? 'Editor unavailable.';});
-    return()=>{disposed=true;active?.dispose();if(instance===active)instance=null;};
+    return()=>{disposed=true;if(instance===active)instance=null;active?.dispose();};
   });
   $effect(()=>{const at=line;if(instance && at)instance.setLine(at);});
   $effect(()=>{instance?.setTheme(theme.name);});

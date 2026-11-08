@@ -1,11 +1,13 @@
 <script>
   import { tick, untrack } from 'svelte';
+  import {isPromptDialogOpen} from './dom.js';
   import {theme} from './theme.svelte.js';
   import { createInvestigationSession } from './investigationSession.js';
   import { symbolDestination } from './symbolContext.js';
   import { sourceLocation } from './investigationState.js';
   import {discoveryEvidence} from './repositoryNeighborhood.js';
   import { repoDefinition,repoFile } from './api.js';
+  import {repositoryCommand} from './repositoryBrowserState.js';
   import {createRepositoryResearch} from './repositoryResearch.js';
   import RepositoryNavigator from './RepositoryNavigator.svelte';
   import InvestigationConversation from './InvestigationConversation.svelte';
@@ -77,6 +79,7 @@
     else send({type:'OPEN',location});
   }
   function promote() { if (working.preview) send({type:'OPEN',location:working.preview.location}); root({type:'PROMOTE',id:working.id}); void tick().then(()=>mainRegion?.focus()); }
+  export function activateRepository(kind='files'){return openBrowser(kind,working?.location ?? reviewOrigin());}
   function browserSet(patch,immediate=false){send({type:'BROWSER.SET',patch,immediate},immediate?'push':'replace');}
   function reviewOrigin(){const origin=review.panes?.find(pane=>pane.id===review.active) ?? review;return sourceLocation({...origin,rev:origin.side==='left'?origin.base:origin.rev});}
   async function openBrowser(kind='files',origin=working?.location,symbol='',character=0){
@@ -84,7 +87,7 @@
     if(!origin)return;
     browserSet({kind,origin,query:'',filter:'',symbol,character},true);await tick();navigator?.focus();
   }
-  async function closeBrowser(){send({type:'BROWSER.CLOSE'});await tick();mainSource?.focus();}
+  async function closeBrowser(){send({type:'BROWSER.CLOSE'});await tick();mainRegion?.focus();mainSource?.focus();}
   const evidenceRequests=new Set();
   $effect(()=>()=>{for(const request of evidenceRequests)request.abort();});
   async function saveDiscovery(entry,request){
@@ -96,24 +99,29 @@
   }
   function resultLocation(entry,request){return sourceLocation({file:entry.path,line:entry.line,rev:request.rev,base:request.base});}
   function sourceCommand(kind,location){void openBrowser(kind,location);}
+  $effect(()=>{
+    if(!active)return;
+    const keys=event=>{const command=repositoryCommand(event);if(!command || event.defaultPrevented || event.target.closest?.('[data-investigation-workbench]') || isPromptDialogOpen() || event.target.closest?.('[role="dialog"],[role="alertdialog"]'))return;event.preventDefault();event.stopImmediatePropagation();openBrowser(command);};
+    window.addEventListener('keydown',keys,true);return()=>window.removeEventListener('keydown',keys,true);
+  });
   const editorEscapes=new WeakSet();
   function captureKeydown(event){
     if(event.key==='Escape' && event.target.closest?.('.monaco-editor') && [...event.target.closest('.monaco-editor').querySelectorAll('.monaco-hover,.context-view,.find-widget,.suggest-widget')].some(node=>node.getBoundingClientRect().height>0 && getComputedStyle(node).visibility!=='hidden' && getComputedStyle(node).display!=='none'))editorEscapes.add(event);
   }
   function keydown(event) {
     if(event.defaultPrevented || editorEscapes.has(event))return;
-    if((event.metaKey || event.ctrlKey) && ((event.key.toLowerCase()==='p' && !event.shiftKey) || (event.key.toLowerCase()==='f' && event.shiftKey) || (event.key.toLowerCase()==='o' && event.shiftKey))){event.preventDefault();event.stopPropagation();openBrowser(event.key.toLowerCase()==='p'?'files':event.key.toLowerCase()==='o'?'symbols':'text');return;}
+    const command=repositoryCommand(event);if(command){event.preventDefault();event.stopPropagation();openBrowser(command);return;}
     if (event.key==='Escape') { event.preventDefault(); event.stopPropagation(); working.preview ? closePreview() : working.browser.open ? closeBrowser() : returnReview(); }
   }
 </script>
-<nav bind:this={tabs} class="investigation-tabs" aria-label="Review investigations">
+<div class="investigation-tab-anchor"><nav bind:this={tabs} class:active={Boolean(active)} class="investigation-tabs" aria-label="Review investigations">
   <button bind:this={reviewButton} class:selected={!active} onclick={returnReview}>Changes</button>
   <button onclick={()=>openBrowser('files',working?.location ?? reviewOrigin())}>Repository</button>
   {#each snapshot.context.items as item}<div class="tab"><button class:selected={snapshot.context.active===item.id} onclick={()=>root({type:'SELECT',id:item.id})} title={item.ref.getSnapshot().context.title}>{item.ref.getSnapshot().context.title}{snapshot.context.main===item.id ? ' · Main' : ''}</button><button aria-label={`Close investigation ${item.ref.getSnapshot().context.title}`} onclick={()=>closeQuestion(item.id)}>×</button></div>{/each}
   {#if snapshot.context.archived.length}<details class="saved-questions"><summary>Saved questions ({snapshot.context.archived.length})</summary><div>{#each [...snapshot.context.archived].reverse() as item}<button onclick={event=>{ event.currentTarget.closest('details').open=false; root({type:'URL.RESTORE',state:item}); }}>{item.title}</button>{/each}</div></details>{/if}
   <button disabled={snapshot.context.items.length>=8 || !review.file} title={`Explore ${review.file} at ${review.rev?.slice(0,8) ?? 'unresolved revision'}`} onclick={event=>start(event)}>＋ Explore in side tab</button>
   <InvestigationNotebook bind:this={notebook} {repo} {number} {currentHead} {currentBase} {pendingReviewsEnabled} {pendingReview} {pendingReviewStale} {onSubmitDraft} question={working ? {id:working.id,title:working.title} : null} {checkpoint} anchor={draftAnchor} top={overlayTop} onInspect={inspectEvidence} onResume={state=>root({type:'URL.RESTORE',state})} />
-</nav>
+</nav></div>
 {#if snapshot.context.notice}<p role="status">{snapshot.context.notice}</p>{/if}
 {#if commandError}<p role="alert">{commandError}</p>{/if}
 {#if storageError}<p role="alert" class="save-error">{storageError}</p>{/if}
@@ -137,5 +145,5 @@
 </div>
 {/if}
 <style>
- .investigation-tabs{display:flex;align-items:center;gap:5px;padding:5px 8px;background:var(--bg);border-bottom:1px solid var(--border);overflow-x:auto;white-space:nowrap;font-size:11px;min-height:34px;}button{cursor:pointer;color:var(--text);background:var(--panel);border:1px solid var(--border);border-radius:5px;padding:5px 8px;}button:disabled{opacity:.4;cursor:default;}button:focus-visible,input:focus-visible{outline:2px solid var(--link);}button.selected{border-color:var(--link);color:var(--link);} .saved-questions{position:relative;}.saved-questions summary{cursor:pointer;padding:5px 8px;}.saved-questions>div{position:fixed;z-index:120;max-height:250px;overflow:auto;background:var(--panel);border:1px solid var(--border);padding:5px;}.saved-questions button{display:block;width:100%;text-align:left;} .tab{display:flex;max-width:230px;}.tab button:first-child{overflow:hidden;text-overflow:ellipsis;}.tab button+button{padding-inline:6px;} .investigation-workbench{position:fixed;z-index:85;top:145px;left:52px;right:8px;bottom:38px;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:12px;box-shadow:0 8px 25px #0004;}header,.investigation-tools{display:flex;align-items:center;gap:7px;padding:8px;border-bottom:1px solid var(--border);}header input{flex:1;min-width:100px;font-weight:600;}.investigation-tools input{flex:1;min-width:100px;}.investigation-tools span,header span,small,footer{color:var(--muted);}input{background:var(--panel);color:var(--text);border:1px solid var(--border);padding:5px 8px;border-radius:5px;} .investigation-body{display:flex;flex:1;min-height:0;}.code-columns{display:flex;flex:1;min-width:0;}.code-columns>section{display:flex;flex-direction:column;flex:1;min-width:180px;border-right:1px solid var(--border);}h2{font:11px/1.6 monospace;padding:7px 10px;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-bottom:1px solid var(--border);}h2 button{float:right;}.workspace-scroll{overflow:auto;min-height:0;flex:1;}.preview-actions{display:flex;gap:5px;padding:5px;background:var(--panel);}.investigation-preview{border-left:2px solid var(--link);}aside{width:280px;min-width:180px;overflow:auto;border-left:1px solid var(--border);}.result{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--border);border-radius:0;background:transparent;padding:8px 10px;}.result strong{display:block;overflow-wrap:anywhere;font:10px monospace;}.result code{display:block;white-space:pre;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-size:10px;margin-top:5px;}footer{padding:5px 9px;border-top:1px solid var(--border);font-size:10px;}p{padding:7px 10px;margin:0;}.partial,.save-error{color:var(--warning,#e9b766);}@media(max-width:800px){.investigation-workbench{left:6px;top:150px;}header{flex-wrap:wrap;}header input{order:-1;flex-basis:80%;}.investigation-body{overflow:auto;}.code-columns{min-width:500px;}aside{min-width:230px;}}
+ .investigation-tab-anchor{min-height:34px;}.investigation-tabs.active{position:fixed;top:0;left:52px;right:8px;z-index:86;}.investigation-tabs{display:flex;align-items:center;gap:5px;padding:5px 8px;background:var(--bg);border-bottom:1px solid var(--border);overflow-x:auto;white-space:nowrap;font-size:11px;min-height:34px;}button{cursor:pointer;color:var(--text);background:var(--panel);border:1px solid var(--border);border-radius:5px;padding:5px 8px;}button:disabled{opacity:.4;cursor:default;}button:focus-visible,input:focus-visible{outline:2px solid var(--link);}button.selected{border-color:var(--link);color:var(--link);} .saved-questions{position:relative;}.saved-questions summary{cursor:pointer;padding:5px 8px;}.saved-questions>div{position:fixed;z-index:120;max-height:250px;overflow:auto;background:var(--panel);border:1px solid var(--border);padding:5px;}.saved-questions button{display:block;width:100%;text-align:left;} .tab{display:flex;max-width:230px;}.tab button:first-child{overflow:hidden;text-overflow:ellipsis;}.tab button+button{padding-inline:6px;} .investigation-workbench{position:fixed;z-index:85;top:145px;left:52px;right:8px;bottom:38px;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:12px;box-shadow:0 8px 25px #0004;}header,.investigation-tools{display:flex;align-items:center;gap:7px;padding:8px;border-bottom:1px solid var(--border);}header input{flex:1;min-width:100px;font-weight:600;}.investigation-tools input{flex:1;min-width:100px;}.investigation-tools span,header span,small,footer{color:var(--muted);}input{background:var(--panel);color:var(--text);border:1px solid var(--border);padding:5px 8px;border-radius:5px;} .investigation-body{display:flex;flex:1;min-height:0;}.code-columns{display:flex;flex:1;min-width:0;}.code-columns>section{display:flex;flex-direction:column;flex:1;min-width:180px;border-right:1px solid var(--border);}h2{font:11px/1.6 monospace;padding:7px 10px;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-bottom:1px solid var(--border);}h2 button{float:right;}.workspace-scroll{overflow:auto;min-height:0;flex:1;}.preview-actions{display:flex;gap:5px;padding:5px;background:var(--panel);}.investigation-preview{border-left:2px solid var(--link);}aside{width:280px;min-width:180px;overflow:auto;border-left:1px solid var(--border);}.result{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--border);border-radius:0;background:transparent;padding:8px 10px;}.result strong{display:block;overflow-wrap:anywhere;font:10px monospace;}.result code{display:block;white-space:pre;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-size:10px;margin-top:5px;}footer{padding:5px 9px;border-top:1px solid var(--border);font-size:10px;}p{padding:7px 10px;margin:0;}.partial,.save-error{color:var(--warning,#e9b766);}@media(max-width:800px){.investigation-tabs.active{left:6px;}.investigation-workbench{left:6px;top:150px;}header{flex-wrap:wrap;}header input{order:-1;flex-basis:80%;}.investigation-body{overflow:auto;}.code-columns{min-width:500px;}aside{min-width:230px;}}
 </style>

@@ -10,3 +10,8 @@ export function normalizeRepositoryBrowser(value,location,legacySearch='',normal
 export function repositoryBrowserRequest(browser) {
   return {kind:browser.kind,query:browser.query,symbol:browser.symbol,path:browser.origin.file,line:browser.origin.line,character:browser.character,rev:browser.origin.rev,base:browser.origin.base};
 }
+
+export function repositoryCommand(event){
+ if(event.isComposing || event.altKey || !(event.metaKey || event.ctrlKey))return null;
+ const key=event.key.toLowerCase();return key==='p' && !event.shiftKey ? 'files' : key==='f' && event.shiftKey ? 'text' : key==='o' && event.shiftKey ? 'symbols' : null;
+}
