@@ -1,3 +1,4 @@
+import {repositoryInsight,validInsightRequest} from './repoInsight.ts';
 import { fileCommitContext, validCommitContextRequest } from './reviewCommitContext.ts';
 import { fetchReviewViewed, writeReviewViewed, ReviewViewedError } from "./reviewViewed.ts";
 import { fetchReviewAttachmentCapability, uploadReviewAttachment, readReviewAttachmentForm, ReviewAttachmentError } from "./reviewAttachments.ts";
@@ -3292,6 +3293,15 @@ async function handleRepoDefinition(req: Request, url: URL): Promise<Response> {
 }
 
 
+async function handleRepoInsight(req:Request,url:URL):Promise<Response> {
+  const request={repo:url.searchParams.get('repo') ?? '',sha:url.searchParams.get('sha') ?? '',headRef:url.searchParams.get('headRef') ?? '',path:url.searchParams.get('path') ?? '',kind:url.searchParams.get('kind') ?? '',symbol:url.searchParams.get('symbol') ?? '',line:Number(url.searchParams.get('line') ?? '1'),character:Number(url.searchParams.get('col') ?? '0')};
+  if(!validInsightRequest(request))return json({error:'invalid repository insight request'},400);
+  return withSearchCtx(request.repo,request.headRef,request.sha,async ctx=>{
+    if(ctx.status!=='ok')return json({status:ctx.status});
+    return json(await repositoryInsight(ctx.checkout,request,req.signal));
+  });
+}
+
 async function handleReviewCommitContext(req: Request, url: URL): Promise<Response> {
   const repo = url.searchParams.get('repo') ?? '';
   const headRef = url.searchParams.get('headRef') ?? '';
@@ -4342,6 +4352,7 @@ export function buildFetchHandler(port: number, dependencyOverrides: Partial<Htt
     if (req.method === "GET" && url.pathname === "/api/repo-definition") {
       return handleRepoDefinition(req, url);
     }
+    if(req.method==='GET' && url.pathname==='/api/repo-insight')return handleRepoInsight(req,url);
     if (req.method === 'GET' && url.pathname === '/api/review-commit-context') return handleReviewCommitContext(req,url);
     if (req.method === "GET" && url.pathname === "/api/repo-references") return handleRepoReferences(req, url);
     if (req.method === "GET" && url.pathname === "/api/repo-files") {

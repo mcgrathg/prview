@@ -1,4 +1,4 @@
-import type { AstDefinition, AstReferences } from "./tsService.ts";
+import type { AstDefinition, AstReferences, AstInsight } from "./tsService.ts";
 import type { AstRequest, AstResponse } from "./tsWorker.ts";
 
 // Client for the AST worker. Keeps the HTTP loop responsive: all sync
@@ -92,4 +92,8 @@ export async function astDefinitions(req: Omit<AstRequest, "id">, signal?: Abort
 }
 export async function astReferences(req: Omit<AstRequest, "id">, signal?: AbortSignal): Promise<AstReferences | null> {
   return (await astLookup({ ...req, kind: "references" }, signal))?.references ?? null;
+}
+
+export async function astInsight(req:Omit<AstRequest,'id'>,signal?:AbortSignal):Promise<AstInsight|null> {
+  return (await astLookup({...req,kind:'insight'},signal))?.insight ?? null;
 }

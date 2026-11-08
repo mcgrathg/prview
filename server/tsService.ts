@@ -462,3 +462,72 @@ export function referencesAt(source: ShaSource, fromPath: string, symbol: string
     for (const path of previousRoots) entry.roots.add(path);
   }
 }
+
+export type InsightKind = 'hover' | 'outline' | 'type' | 'implementation';
+export interface InsightRange { line:number; character:number; endLine:number; endCharacter:number }
+export interface InsightOutline { name:string; kind:string; range:InsightRange; selection:InsightRange; children:InsightOutline[] }
+export interface AstInsight {
+  status:'ok' | 'unsupported' | 'unavailable';
+  reason?:string;
+  hover:{signature:string;documentation:string} | null;
+  outline:InsightOutline[];
+  locations:AstDefinition[];
+  limited:boolean;
+}
+export function insightAt(source:ShaSource,request:{path:string;kind:InsightKind;line:number;character:number;symbol?:string;candidatePaths?:string[]}):AstInsight {
+  const {path:fromPath,kind,line,character,symbol='',candidatePaths=[]}=request;
+  const result:AstInsight={status:'ok',hover:null,outline:[],locations:[],limited:false};
+  if(!/\.(?:[cm]?[jt]sx?|svelte)$/.test(fromPath))return {...result,status:'unsupported',reason:'This file type has no source analysis provider.'};
+  const raw=source.paths().includes(fromPath) ? source.readFile(fromPath) : null;
+  if(raw===null)return {...result,status:'unavailable',reason:'Source is unavailable at this revision.'};
+  if(Buffer.byteLength(raw,'utf8')>512*1024)return {...result,status:'unavailable',reason:'Source analysis is limited to files up to 512KiB.'};
+  const entry=entryFor(source),fileName=toVirtual(fromPath),previousRoots=[...entry.roots];
+  if(kind==='implementation')entry.roots.clear();
+  const roots=[...new Set([fromPath,...candidatePaths])];
+  if(roots.length>300)result.limited=true;
+  for(const path of roots.slice(0,300))if(entry.pathSet.has(path))entry.roots.add(toVirtual(path));
+  try {
+    const program=entry.service.getProgram(),file=program?.getSourceFile(fileName);
+    if(!file)return {...result,status:'unavailable'};
+    const range=(span:ts.TextSpan):InsightRange=>{
+      const start=ts.getLineAndCharacterOfPosition(file,Math.min(span.start,file.text.length));
+      const end=ts.getLineAndCharacterOfPosition(file,Math.min(span.start+span.length,file.text.length));
+      return {line:start.line+1,character:start.character,endLine:end.line+1,endCharacter:end.character};
+    };
+    if(kind==='outline') {
+      let count=0;
+      const items=(nodes:ts.NavigationTree[]=[]):InsightOutline[]=>{
+        const output:InsightOutline[]=[];
+        for(const node of nodes) {
+          if(count>=500){result.limited=true;break;}
+          const span=node.spans[0];if(!span)continue;count++;if(node.text.length>240)result.limited=true;
+          output.push({name:node.text.slice(0,240),kind:node.kind,range:range(span),selection:range(node.nameSpan ?? span),children:items(node.childItems)});
+        }
+        return output;
+      };
+      result.outline=items(entry.service.getNavigationTree(fileName).childItems);return result;
+    }
+    const lineText=file.text.split('\n')[line-1];
+    if(!Number.isSafeInteger(line) || !Number.isSafeInteger(character) || line<1 || character<0 || lineText===undefined || character>lineText.length)return {...result,status:'unavailable'};
+    let offset:number;
+    try{offset=ts.getPositionOfLineAndCharacter(file,line-1,character);}catch{return {...result,status:'unavailable'};}
+    const identifier=identifierAt(file.text,offset);
+    if(!identifier)return result;
+    if(symbol && identifier!==symbol)return {...result,status:'unavailable'};
+    if(kind==='hover') {
+      const info=entry.service.getQuickInfoAtPosition(fileName,offset);
+      if(info){const signature=ts.displayPartsToString(info.displayParts),documentation=ts.displayPartsToString(info.documentation);
+        result.hover={signature:signature.slice(0,4000),documentation:documentation.slice(0,8000)};result.limited=signature.length>4000 || documentation.length>8000;}
+      return result;
+    }
+    const definitions=kind==='type' ? entry.service.getTypeDefinitionAtPosition(fileName,offset) : entry.service.getImplementationAtPosition(fileName,offset);
+    for(const definition of definitions ?? []) {
+      const path=fromVirtual(definition.fileName),target=program?.getSourceFile(definition.fileName);
+      if(!entry.pathSet.has(path) || !target)continue;
+      if(result.locations.length>=200){result.limited=true;break;}
+      const position=ts.getLineAndCharacterOfPosition(target,definition.textSpan.start);
+      result.locations.push({path,line:position.line+1,text:(target.text.split('\n')[position.line] ?? '').trim(),symbol:identifierAt(target.text,definition.textSpan.start) ?? ''});
+    }
+    return result;
+  } finally {entry.roots.clear();for(const root of previousRoots)entry.roots.add(root);}
+}

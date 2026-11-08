@@ -1,0 +1,11 @@
+# Repository insight worker checkpoint — 2026-11-08
+
+Internal backend slice of Beads9sn.3; editor/navigation consumers remain in progress. No new UI or background request is enabled by this checkpoint.
+
+The existing immutable Git TypeScript worker now accepts source insight requests: hover signatures/documentation, nested outline ranges, type definitions and implementation locations. The HTTP boundary validates repository/ref, full SHA, relative path, operation, exact symbol and line/column. Hover content comes from the source language service; unsupported file types, absent/mismatched source and source-only limitations stay explicit. Svelte support remains limited to script blocks. Repository packages are not installed or executed.
+
+Implementation queries include all tracked code roots for repositories up to300 files. Larger repositories reuse bounded semantic-reference discovery, always labeling implementation candidates as partial. Roots are deduplicated before the cap, and previous service roots are restored after each request. Output outlines stop at500 entries and locations at200, with a limited flag. Requested files over512KiB UTF-8 are unavailable; this is a requested-file limit, not a total dependency-graph memory promise. Existing worker queue, cancellation and20-second dispatch timeout remain authoritative.
+
+47 tests /130 assertions passed across insight service, actual HTTP/worker/local Git mirror, definition/reference regression and repository search. They cover real docs/signatures, unchanged imported types and implementations, nested ranges, original/head isolation, stale symbols/positions, unsupported/Svelte scope, large repository partiality, exactly300 roots and multibyte size limits. Core service/worker/client strict typing passes. Broader typing still reports the previously documented upstream GitHub/mock/notification/JavaScript declaration diagnostics; no new insight diagnostic was present.
+
+Independent boundary review found two issues in the first version: origin duplication dropped the last root at300, and the file cap measured UTF-16 characters. Both were corrected and verified with focused regressions. Repository inspection uses the existing source provider and worker; no repository code runs and no GitHub mutation was made.
