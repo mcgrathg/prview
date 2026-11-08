@@ -93,6 +93,8 @@
   import RangePicker from "./RangePicker.svelte";
   import FileTree from "./FileTree.svelte";
   import ReviewOrganization from "./ReviewOrganization.svelte";
+  import ReviewSidebar from "./CollapsibleSidebar.svelte";
+  let reviewSidebar = $state(null);
   import { organizationKey } from "../../../shared/review-organization/machine.ts";
   import Kbd from "./Kbd.svelte";
   import Thread from "./Thread.svelte";
@@ -3692,17 +3694,24 @@
               {:else}<button class="toolbar-btn" onclick={toggleDiffLayout}>{prefs.diffLayout === "split" ? "unified" : "side by side"}</button>{/if}
             </div>
           </div>
+          {#snippet sidebarContents()}
+            {#if organizationEnabled && diffState === "ready" && comparisonFiles.length}
+              <ReviewOrganization bind:this={organizationPanel} comparison={organizationComparison} nativeFiles={comparisonFiles} {selectedPath} onChange={receiveOrganization} onSelect={path => { openChangedFile(path); reviewSidebar?.dismiss(); }} onOpenBeside={path => { openBeside(path); reviewSidebar?.dismiss(); }} docking={workspaceEnabled} fileHref={path => buildReviewHash(repo, number, { ...reviewState, file: path, view: "diff", line: null, rev: organizationComparison.head, base: organizationComparison.base })} restoredControls={reviewState.controls} onControlsChange={(controls, mode) => navigateReview({ controls }, mode)} />
+            {:else}
+              <FileTree files={treeFiles} {selectedPath} hoveredPath={hoveredDiffPath} onSelect={selectFileByPath} onContextMenu={prefs.reviewFileMenuEnabled ? openFileMenu : null} />
+            {/if}
+          {/snippet}
+          {#if organizationEnabled}
+            <ReviewSidebar bind:this={reviewSidebar} modalOpen={Boolean(pickerMode || rangeOpen || historyOpen || telescopeOpen || shortcutRequest || confirmAction || mergeConfirm || forceMergeConfirm || promptOpen)} count={diffState === "ready" ? treeFiles.length : pr.changedFiles} onSearch={() => telescope?.activate('files')}>{@render sidebarContents()}</ReviewSidebar>
+          {:else}
           <aside class="tree-pane">
             <div class="file-nav-head">
               <span>Changed files</span>
               {#if pr.changedFiles > 0}<span class="fcount">{diffState === "ready" ? treeFiles.length : pr.changedFiles}</span>{/if}
             </div>
-            {#if organizationEnabled && diffState === "ready" && comparisonFiles.length}
-              <ReviewOrganization bind:this={organizationPanel} comparison={organizationComparison} nativeFiles={comparisonFiles} {selectedPath} onChange={receiveOrganization} onSelect={openChangedFile} onOpenBeside={openBeside} docking={workspaceEnabled} fileHref={path => buildReviewHash(repo, number, { ...reviewState, file: path, view: "diff", line: null, rev: organizationComparison.head, base: organizationComparison.base })} restoredControls={reviewState.controls} onControlsChange={(controls, mode) => navigateReview({ controls }, mode)} />
-            {:else}
-              <FileTree files={treeFiles} {selectedPath} hoveredPath={hoveredDiffPath} onSelect={selectFileByPath} onContextMenu={prefs.reviewFileMenuEnabled ? openFileMenu : null} />
-            {/if}
+            {@render sidebarContents()}
           </aside>
+          {/if}
           <div class="tree-resizer" role="separator" aria-orientation="vertical" onpointerdown={startTreeResize}></div>
           <div class="diff-pane">
             {#if organizationEnabled && !workspaceEnabled && reviewState.view === 'diff' && reviewState.file && diffState === 'ready' && !comparisonFiles.some(file => file.path === reviewState.file)}<div class="diff-status" role="alert">The requested file has no diff in this comparison: {reviewState.file}. Select another file or open its source.</div>{/if}
@@ -7903,5 +7912,12 @@
   .file-context-menu button:disabled {
     color: var(--text-dim);
     cursor: default;
+  }
+
+  .files-layout:has(> :global(.review-sidebar[data-pinned='false'])) { grid-template-columns:48px 0 minmax(0, 1fr); }
+  .files-layout:has(> :global(.review-sidebar[data-pinned='false'])) > .tree-resizer { visibility:hidden; pointer-events:none; }
+  @media (max-width:940px) {
+    .files-layout:has(> :global(.review-sidebar[data-pinned='false'])) > .diff-pane { grid-column:3; grid-row:2; }
+    .files-layout:has(> :global(.review-sidebar[data-pinned='true'])) > .diff-pane { grid-column:1; grid-row:3; }
   }
 </style>
