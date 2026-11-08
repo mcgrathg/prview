@@ -3,8 +3,8 @@ import ts from "typescript";
 // Language service over a virtual FS pinned to a git sha. Content is immutable
 // per key, so snapshots never version and caches never invalidate.
 //
-// Everything here is synchronous (the LS host API is sync, and readFile shells
-// out per file), so this module must only run inside the AST worker - never on
+// Everything here is synchronous (the LS host API and Git reads are sync), so
+// this module must only run inside the AST worker - never on
 // the HTTP event loop. See tsWorker.ts / astResolve.ts.
 export interface ShaSource {
   key: string;

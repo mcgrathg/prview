@@ -40,6 +40,6 @@ The real native adapter uploaded the authorized 79-byte synthetic PNG to public 
 
 ## Search and initial-sync limits
 
-Imported package/type aliases now resolve through tracked package exports and tsconfig conditions. The real Storybook import and use resolve to the exported declaration at `ast.ts:6`; the import binding is no longer reported as the definition. The measured cold worker lookup took 14.67 seconds and warm lookup 57 ms, so cold-cache margin below the 20-second timeout remains limited.
+Imported package/type aliases now resolve through tracked package exports and tsconfig conditions. The real Storybook import and use resolve to the exported declaration at `ast.ts:6`; the import binding is no longer reported as the definition. That initial cold lookup measured 14.67 seconds. The subsequent batched-read optimization measured a 0.715-second cold median over three fresh workers, with the same declaration target; see `definition-lookup-performance.md` for comparable inputs and limits.
 
 `first-sync-spike.md` records a bounded-fetch experiment with exact diff/source parity on two real PRs. It is a completed investigation, not a production mirror change. The app still uses the full mirror; the spike's 2.5–3.2-second Git results are not application load-time claims. Shallow history and repository search require separate readiness handling before adoption.
