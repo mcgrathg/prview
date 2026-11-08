@@ -1,0 +1,159 @@
+{
+  "date": "2026-11-07",
+  "before": {
+    "repo": "storybookjs/storybook",
+    "sha": "59c927082239afee5a702036c62c8b61c192c865",
+    "fromPath": "code/frameworks/angular-vite/src/docgen/story-docs-args.ts",
+    "expected": {
+      "path": "code/core/src/csf-tools/estree/ast.ts",
+      "line": 6,
+      "text": "export type Node = E.Node;",
+      "symbol": "Node"
+    },
+    "conditions": "Three fresh production AST workers using an existing local full mirror; OS/disk Git caches are warm. Worker creation/import and synchronous reads are included. No repository code executed, no new clone.",
+    "samples": [
+      {
+        "coldMs": 14499.954416999999,
+        "warmMs": 12.214791999998852
+      },
+      {
+        "coldMs": 14099.976374999998,
+        "warmMs": 11.144790999998804
+      },
+      {
+        "coldMs": 15629.929375,
+        "warmMs": 10.585083000005397
+      }
+    ]
+  },
+  "after": {
+    "repo": "storybookjs/storybook",
+    "sha": "59c927082239afee5a702036c62c8b61c192c865",
+    "fromPath": "code/frameworks/angular-vite/src/docgen/story-docs-args.ts",
+    "expected": {
+      "path": "code/core/src/csf-tools/estree/ast.ts",
+      "line": 6,
+      "text": "export type Node = E.Node;",
+      "symbol": "Node"
+    },
+    "conditions": "Three fresh production AST workers using an existing local full mirror; OS/disk Git caches are warm. Worker creation/import and synchronous reads are included. No repository code executed, no new clone.",
+    "samples": [
+      {
+        "coldMs": 1149.98475,
+        "warmMs": 15.880709000000024
+      },
+      {
+        "coldMs": 714.635125,
+        "warmMs": 17.225834000000077
+      },
+      {
+        "coldMs": 708.9179170000002,
+        "warmMs": 17.08004099999971
+      }
+    ]
+  },
+  "beforeProfile": {
+    "totalMs": 13343.127625,
+    "reads": 911,
+    "readMs": 12651.692898000021,
+    "treeMs": 125.27233400000001,
+    "bytes": 3692671,
+    "buckets": {
+      "source": {
+        "count": 784,
+        "ms": 10862.132062000017
+      },
+      "tsconfig": {
+        "count": 18,
+        "ms": 241.15704000000244
+      },
+      "package.json": {
+        "count": 109,
+        "ms": 1548.403796000001
+      }
+    },
+    "defs": [
+      {
+        "path": "code/core/src/csf-tools/estree/ast.ts",
+        "line": 6,
+        "text": "export type Node = E.Node;",
+        "symbol": "Node"
+      }
+    ]
+  },
+  "afterProfile": {
+    "totalMs": 791.95575,
+    "reads": 911,
+    "readMs": 302.8860969999998,
+    "treeMs": 160.367584,
+    "bytes": 3692671,
+    "gitOps": {
+      "tree": {
+        "calls": 2,
+        "ms": 239.29637500000007,
+        "bytes": 1655877
+      },
+      "batch": {
+        "calls": 8,
+        "ms": 205.91866800000003,
+        "bytes": 16112977
+      }
+    },
+    "buckets": {
+      "source": {
+        "count": 784,
+        "ms": 284.0809730000001
+      },
+      "tsconfig": {
+        "count": 18,
+        "ms": 18.76795800000002
+      },
+      "package.json": {
+        "count": 109,
+        "ms": 0.037165999999672295
+      }
+    },
+    "defs": [
+      {
+        "path": "code/core/src/csf-tools/estree/ast.ts",
+        "line": 6,
+        "text": "export type Node = E.Node;",
+        "symbol": "Node"
+      }
+    ]
+  },
+  "medianColdMs": {
+    "before": 14499.954416999999,
+    "after": 714.635125,
+    "ratio": 20.290010817758223
+  },
+  "live": {
+    "pid": 22318,
+    "route": "/api/repo-definition",
+    "sha": "59c927082239afee5a702036c62c8b61c192c865",
+    "path": "code/frameworks/angular-vite/src/docgen/story-docs-args.ts",
+    "conditions": "Fresh foreground-only server AST worker, existing local mirror; first request is worker-cold, following requests reuse it. Not cold disk, network or initial mirror setup.",
+    "milliseconds": [
+      1118.899959,
+      29.261750000000085,
+      55.36950000000007
+    ],
+    "response": {
+      "status": "ok",
+      "definition": {
+        "path": "code/core/src/csf-tools/estree/ast.ts",
+        "line": 6,
+        "text": "export type Node = E.Node;",
+        "symbol": "Node"
+      },
+      "candidates": [
+        {
+          "path": "code/core/src/csf-tools/estree/ast.ts",
+          "line": 6,
+          "text": "export type Node = E.Node;",
+          "symbol": "Node"
+        }
+      ]
+    }
+  }
+}

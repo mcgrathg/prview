@@ -38,6 +38,57 @@ describe("definitionsAt", () => {
     expect(defs?.some((d) => d.path === "src/lib.ts" && d.line === 1)).toBe(true);
   });
 
+  test("an unresolved renamed type import is not its own definition", () => {
+    const src = makeSource({
+      "src/app.ts": 'import { type ESTreeNode as Node } from "missing/internal/ast";\nexport const visit = (node: Node) => node;\n',
+    });
+    expect(definitionsAt(src, "src/app.ts", "Node", 1, 28)).toBeNull();
+    expect(definitionsAt(src, "src/app.ts", "Node", 2, 28)).toBeNull();
+  });
+
+  test("a package export condition follows renamed types to their declaration", () => {
+    const src = makeSource({
+      "tsconfig.json": '{ "extends": "./config/base.json" }',
+      "config/base.json": '{ "compilerOptions": { "customConditions": ["code"] } }',
+      "packages/ast/package.json": JSON.stringify({
+        name: "@example/ast",
+        exports: { "./internal/ast": { types: "./dist/ast.d.ts", code: "./src/index.ts", default: "./dist/ast.js" } },
+      }),
+      "packages/ast/src/index.ts": 'export type { Node as ESTreeNode } from "./ast";\n',
+      "packages/ast/src/ast.ts": 'export type Node = { kind: string };\n',
+      "src/app.ts": 'import { type ESTreeNode as Node } from "@example/ast/internal/ast";\nexport const visit = (node: Node) => node;\n',
+    });
+    const expected = [{ path: "packages/ast/src/ast.ts", line: 1, text: "export type Node = { kind: string };", symbol: "Node" }];
+    expect(definitionsAt(src, "src/app.ts", "Node", 1, 28)).toEqual(expected);
+    expect(definitionsAt(src, "src/app.ts", "Node", 2, 28)).toEqual(expected);
+  });
+
+  test("package source conditions must be enabled and package names unique", () => {
+    const files = {
+      "packages/ast/package.json": JSON.stringify({ name: "ast", exports: { ".": { code: "./index.ts" } } }),
+      "packages/ast/index.ts": "export type ESTreeNode = { kind: string };\n",
+      "src/app.ts": 'import { type ESTreeNode as Node } from "ast";\nexport const visit = (node: Node) => node;\n',
+    };
+    expect(definitionsAt(makeSource(files), "src/app.ts", "Node", 2, 28)).toBeNull();
+    expect(definitionsAt(makeSource({
+      ...files,
+      "tsconfig.json": '{ "compilerOptions": { "customConditions": ["code"] } }',
+      "examples/ast/package.json": JSON.stringify({ name: "ast", exports: "./index.ts" }),
+      "examples/ast/index.ts": "export type ESTreeNode = { unrelated: true };\n",
+    }), "src/app.ts", "Node", 2, 28)).toBeNull();
+  });
+
+  test("type aliases through tsconfig paths still resolve", () => {
+    const src = makeSource({
+      "tsconfig.json": '{ "compilerOptions": { "paths": { "@ast/*": ["src/*"] } } }',
+      "src/ast.ts": "export type ESTreeNode = { kind: string };\n",
+      "src/app.ts": 'import { type ESTreeNode as Node } from "@ast/ast";\nexport const visit = (node: Node) => node;\n',
+    });
+    expect(definitionsAt(src, "src/app.ts", "Node", 2, 28)).toEqual([
+      { path: "src/ast.ts", line: 1, text: "export type ESTreeNode = { kind: string };", symbol: "ESTreeNode" },
+    ]);
+  });
+
   test("member access resolves to the method declaration", () => {
     const src = makeSource({
       "src/shape.ts": "export class Shape {\n  area() {\n    return 0;\n  }\n}\n",
@@ -45,6 +96,19 @@ describe("definitionsAt", () => {
     });
     const defs = definitionsAt(src, "src/app.ts", "area", 2, 29);
     expect(defs).toEqual([{ path: "src/shape.ts", line: 2, text: "area() {", symbol: "area" }]);
+  });
+
+  test("module strings open their source file while stale and ordinary strings stay unresolved", () => {
+    const line = 'import { shape } from "./shape-tools.js";';
+    const src = makeSource({
+      "src/shape-tools.ts": "export const shape = 1;\n",
+      "src/app.ts": line + '\nconst label = "./shape-tools.js";\n',
+    });
+    expect(definitionsAt(src, "src/app.ts", "./shape-tools.js", 1, line.indexOf('./shape'))).toEqual([
+      { path: "src/shape-tools.ts", line: 1, text: "export const shape = 1;", symbol: "./shape-tools.js" },
+    ]);
+    expect(definitionsAt(src, "src/app.ts", "./other.js", 1, line.indexOf('./shape'))).toBeNull();
+    expect(definitionsAt(src, "src/app.ts", "./shape-tools.js", 2, 15)).toBeNull();
   });
 
   test("rejects when the clicked token does not match the symbol", () => {

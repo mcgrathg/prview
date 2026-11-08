@@ -546,3 +546,78 @@ test("checkbox ticks queued during a write share one description update, and lat
     rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test("queued immediate inline comments preserve captured heads and fail after a push", async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), "pr-cockpit-inline-head-"));
+  const url = (file: string) => JSON.stringify(new URL(file, import.meta.url).href);
+  const scenario = `
+    import { mock } from "bun:test";
+    globalThis.fetch = async () => { throw new Error("unexpected network request"); };
+    const db = await import(${url("./db.ts")});
+    const repo = "acme/app";
+    const captured = "a".repeat(40);
+    const pushed = "b".repeat(40);
+    const posts = [];
+    const refreshes = [];
+    const liveHeads = new Map();
+    const cache = (number, head) => db.upsertCachedPrDetail({
+      repo, number, head_sha: head, detail_json: JSON.stringify({ id: "PR_" + number, headRefOid: head }), fetched_at: new Date().toISOString(),
+    });
+    const pollerUrl = ${url("./poller.ts")};
+    const poller = await import(pollerUrl);
+    mock.module(pollerUrl, () => ({ ...poller, pollOnce: async () => {}, refreshPr: async (_repo, number) => {
+      refreshes.push(number);
+      if (number === 305) throw new Error("refresh unavailable");
+      cache(number, liveHeads.get(number));
+    } }));
+    const githubUrl = ${url("./github.ts")};
+    const github = await import(githubUrl);
+    mock.module(githubUrl, () => ({ ...github, postInlineComment: async (...args) => posts.push(args) }));
+    const { processMutation, enqueueMutation } = await import(${url("./mutations.ts")});
+    const location = { kind: "inline-comment", path: "src/app.ts", line: 13, side: "RIGHT", startLine: 9, startSide: "LEFT", body: "captured range" };
+    const run = async (number, payload, cachedHead, liveHead) => {
+      cache(number, cachedHead);
+      liveHeads.set(number, liveHead);
+      const id = db.insertMutation({ repo, number, kind: payload.kind, payload_json: JSON.stringify(payload), created_at: new Date().toISOString() });
+      await processMutation(db.getMutation(id));
+      return db.getMutation(id);
+    };
+    const stale = await run(301, { ...location, headSha: captured }, captured, pushed);
+    const matched = await run(302, { ...location, headSha: captured }, pushed, captured);
+    const legacy = await run(303, location, captured, pushed);
+    const invalid = await run(304, { ...location, headSha: "not-a-sha" }, captured, captured);
+    const unavailable = await run(305, { ...location, headSha: captured }, captured, captured);
+    const validationErrors = [];
+    for (const headSha of ["short", "g".repeat(40), "a".repeat(39), null, 1]) {
+      try { enqueueMutation({ repo, number: 306, payload: { ...location, headSha } }); }
+      catch (error) { validationErrors.push(error.message); }
+    }
+    console.log(JSON.stringify({ stale, matched, legacy, invalid, unavailable, posts, refreshes, validationErrors, captured }));
+  `;
+  try {
+    const child = Bun.spawn([process.execPath, "-e", scenario], {
+      env: { ...Bun.env, COCKPIT_DATA_DIR: dataDir, COCKPIT_MOCK: "1" }, stdout: "pipe", stderr: "pipe",
+    });
+    const [exitCode, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    if (exitCode !== 0) throw new Error(stderr);
+    const result = JSON.parse(stdout.trim());
+    expect(result.stale?.state).toBe("failed");
+    expect(result.stale?.error).toContain("PR head changed");
+    expect(JSON.parse(result.stale.payload_json).headSha).toBe(result.captured);
+    expect(result.matched).toBeNull();
+    expect(result.legacy).toBeNull();
+    expect(result.posts.map((args: unknown[]) => args.slice(0, 3))).toEqual([
+      ["acme/app", 302, result.captured], ["acme/app", 303, result.captured],
+    ]);
+    expect(result.posts[0][3]).toMatchObject({ path: "src/app.ts", line: 13, side: "RIGHT", startLine: 9, startSide: "LEFT", body: "captured range" });
+    expect(result.refreshes.filter((number: number) => number === 302)).toHaveLength(2);
+    expect(result.refreshes.filter((number: number) => number === 303)).toHaveLength(1);
+    expect(result.invalid?.state).toBe("failed");
+    expect(result.invalid?.error).toContain("head SHA");
+    expect(result.unavailable?.state).toBe("failed");
+    expect(result.unavailable?.error).toContain("refresh unavailable");
+    expect(result.validationErrors).toHaveLength(5);
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});

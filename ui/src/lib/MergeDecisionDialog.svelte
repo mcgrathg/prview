@@ -1,13 +1,15 @@
 <script>
   import ConfirmDialog from "./ConfirmDialog.svelte";
 
-  let { number, headRef, baseRef, methodLabel, force = false, onConfirm, onCancel } = $props();
+  let { number, headRef, baseRef, methodLabel, force = false, safe = false, onConfirm, onCancel } = $props();
 </script>
 
 <ConfirmDialog
   title="{force ? 'Force-merge' : 'Merge'} #{number}?"
   badge={methodLabel}
-  confirmLabel={force ? "Force-merge" : "Merge"}
+  confirmLabel={`${safe ? "Yes, " : ""}${force ? "Force-merge" : "Merge"}`}
+  cancelLabel={safe ? "No, cancel" : "Cancel"}
+  focusCancel={safe}
   danger={force}
   icon={force ? null : mergeIcon}
   detail={route}
@@ -20,6 +22,7 @@
 {/snippet}
 
 {#snippet route()}
+  {#if safe}<p>This changes the shared GitHub base branch. Other people will see the merge; it cannot be undone with this dialog.</p>{/if}
   <div class="merge-route" aria-label={`${headRef} into ${baseRef}`}>
     <span class="route-ref">{headRef}</span>
     <svg class="route-arrow" viewBox="0 0 20 12" aria-hidden="true"><path d="M1 6h16m-4-4 4 4-4 4"></path></svg>

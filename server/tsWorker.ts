@@ -1,7 +1,8 @@
-// Runs the synchronous LanguageService + git-show work off the HTTP event
+// Runs the synchronous LanguageService and Git object reads off the HTTP event
 // loop. One request at a time; the client (astResolve.ts) serializes.
 import { definitionsAt } from "./tsService.ts";
-import { lsTree, showFile } from "./gitShow.ts";
+import { lsTree } from "./gitShow.ts";
+import { astGitSource } from "./astGitSource.ts";
 
 export interface AstRequest {
   id: number;
@@ -24,7 +25,7 @@ self.onmessage = (event: MessageEvent<AstRequest>) => {
       {
         key: `${repo}\n${sha}`,
         paths: () => lsTree(checkout, repo, sha),
-        readFile: (path) => showFile(checkout, sha, path),
+        readFile: astGitSource(checkout, sha),
       },
       fromPath,
       symbol,

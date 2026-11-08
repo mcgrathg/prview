@@ -3,8 +3,8 @@ import ts from "typescript";
 // Language service over a virtual FS pinned to a git sha. Content is immutable
 // per key, so snapshots never version and caches never invalidate.
 //
-// Everything here is synchronous (the LS host API is sync, and readFile shells
-// out per file), so this module must only run inside the AST worker - never on
+// Everything here is synchronous (the LS host API and Git reads are sync), so
+// this module must only run inside the AST worker - never on
 // the HTTP event loop. See tsWorker.ts / astResolve.ts.
 export interface ShaSource {
   key: string;
@@ -132,6 +132,26 @@ function parseTsconfigPaths(
   return rule;
 }
 
+function parseTsconfigConditions(
+  configPath: string,
+  readFile: (path: string) => string | null,
+  visited = new Set<string>(),
+): string[] | null {
+  if (visited.has(configPath)) return null;
+  visited.add(configPath);
+  const raw = readFile(configPath);
+  if (raw === null) return null;
+  const { config } = ts.parseConfigFileTextToJson(configPath, raw);
+  if (!config) return null;
+  const conditions = config.compilerOptions?.customConditions;
+  if (Array.isArray(conditions)) return conditions.filter((value): value is string => typeof value === "string");
+  if (typeof config.extends === "string" && config.extends.startsWith(".")) {
+    const parent = normalize(`${dirname(configPath)}/${config.extends}`);
+    return parseTsconfigConditions(parent.endsWith(".json") ? parent : `${parent}.json`, readFile, visited);
+  }
+  return null;
+}
+
 function matchPaths(rule: PathsRule, specifier: string): string[] {
   const out: string[] = [];
   for (const [pattern, targets] of rule.patterns) {
@@ -219,17 +239,71 @@ function entryFor(source: ShaSource): ServiceEntry {
     }
   };
 
+  let packageDirs: Map<string, string[]> | undefined;
+  const customConditions = new Map<string, string[]>();
+  const conditionsFor = (fromRepo: string): string[] => {
+    let dir = dirname(fromRepo);
+    const cached = customConditions.get(dir);
+    if (cached) return cached;
+    while (true) {
+      const conditions = parseTsconfigConditions(dir ? `${dir}/tsconfig.json` : "tsconfig.json", (path) => read(toVirtual(path)));
+      if (conditions) {
+        customConditions.set(dirname(fromRepo), conditions);
+        return conditions;
+      }
+      if (!dir) break;
+      dir = dirname(dir);
+    }
+    customConditions.set(dirname(fromRepo), []);
+    return [];
+  };
+
+  const resolvePackage = (specifier: string, fromRepo: string): string | null => {
+    const name = specifier.startsWith("@") ? specifier.split("/").slice(0, 2).join("/") : specifier.split("/")[0]!;
+    if (!packageDirs) {
+      packageDirs = new Map();
+      for (const path of pathSet) {
+        if (path !== "package.json" && !path.endsWith("/package.json")) continue;
+        const raw = read(toVirtual(path));
+        if (raw === null) continue;
+        let manifest: unknown;
+        try { manifest = JSON.parse(raw); } catch { continue; }
+        if (!manifest || typeof manifest !== "object" || !("name" in manifest) || typeof manifest.name !== "string") continue;
+        const dirs = packageDirs.get(manifest.name) ?? [];
+        dirs.push(dirname(path));
+        packageDirs.set(manifest.name, dirs);
+      }
+    }
+    const dirs = packageDirs.get(name);
+    if (dirs?.length !== 1) return null;
+    const packageDir = dirs[0]!;
+    const repoPathFor = (fileName: string): string => {
+      const marker = `/node_modules/${name}/`;
+      const offset = fileName.lastIndexOf(marker);
+      return offset === -1 ? fromVirtual(fileName) : normalize(`${packageDir}/${fileName.slice(offset + marker.length)}`);
+    };
+    const resolved = ts.resolveModuleName(specifier, toVirtual(fromRepo), {
+      ...COMPILER_OPTIONS,
+      customConditions: conditionsFor(fromRepo),
+    }, {
+      fileExists: (fileName) => pathSet.has(repoPathFor(fileName)),
+      readFile: (fileName) => read(toVirtual(repoPathFor(fileName))) ?? undefined,
+    }).resolvedModule;
+    if (!resolved) return null;
+    const path = repoPathFor(resolved.resolvedFileName);
+    return pathSet.has(path) ? path : null;
+  };
+
   const resolveRepoPath = (specifier: string, fromRepo: string): string | null => {
     if (specifier.startsWith(".")) {
       return resolveStem(normalize(`${dirname(fromRepo)}/${specifier}`));
     }
     const rule = pathsRuleFor(fromRepo);
-    if (!rule) return null;
-    for (const stem of matchPaths(rule, specifier)) {
+    for (const stem of rule ? matchPaths(rule, specifier) : []) {
       const resolved = resolveStem(stem);
       if (resolved) return resolved;
     }
-    return null;
+    return resolvePackage(specifier, fromRepo);
   };
 
   const host: ts.LanguageServiceHost = {
@@ -306,21 +380,34 @@ export function definitionsAt(
   } catch {
     return null;
   }
-  // Guard against stale coordinates: the clicked token must actually be there.
-  if (identifierAt(sourceFile.text, offset) !== symbol) return null;
+  let moduleString = false;
+  const findModule = (node: ts.Node): void => {
+    if (offset < node.getStart(sourceFile) || offset >= node.getEnd()) return;
+    if (ts.isStringLiteralLike(node) && node.text === symbol) {
+      const parent = node.parent;
+      moduleString = (ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)) && parent.moduleSpecifier === node
+        || ts.isExternalModuleReference(parent) && parent.expression === node
+        || ts.isCallExpression(parent) && parent.arguments[0] === node
+          && (parent.expression.kind === ts.SyntaxKind.ImportKeyword || ts.isIdentifier(parent.expression) && parent.expression.text === "require")
+        || ts.isLiteralTypeNode(parent) && ts.isImportTypeNode(parent.parent);
+    } else ts.forEachChild(node, findModule);
+  };
+  findModule(sourceFile);
+  if (!moduleString && identifierAt(sourceFile.text, offset) !== symbol) return null;
 
   const defs = entry.service.getDefinitionAtPosition(fileName, offset);
   if (!defs?.length) return null;
 
   const out: AstDefinition[] = [];
   for (const def of defs) {
+    if (def.kind === ts.ScriptElementKind.alias) continue;
     const repoPath = fromVirtual(def.fileName);
     if (!entry.pathSet.has(repoPath)) continue;
     const defSource = program?.getSourceFile(def.fileName);
     if (!defSource) continue;
     const pos = ts.getLineAndCharacterOfPosition(defSource, def.textSpan.start);
     const lineText = defSource.text.split("\n")[pos.line] ?? "";
-    out.push({ path: repoPath, line: pos.line + 1, text: lineText.trim(), symbol: def.name });
+    out.push({ path: repoPath, line: pos.line + 1, text: lineText.trim(), symbol: moduleString ? symbol : def.name });
   }
   return out.length ? out : null;
 }

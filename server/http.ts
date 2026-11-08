@@ -1,3 +1,6 @@
+import { fetchReviewViewed, writeReviewViewed, ReviewViewedError } from "./reviewViewed.ts";
+import { fetchReviewAttachmentCapability, uploadReviewAttachment, readReviewAttachmentForm, ReviewAttachmentError } from "./reviewAttachments.ts";
+import { reviewOrganization } from "./reviewOrganization.ts";
 import { handleWhiteboard } from "./whiteboard.ts";
 import { codeScanningAlertNumber, isCodeScanningThread, validateCodeScanningDismissal } from "../shared/codeScanning.js";
 import { cookingStage, isBurnt } from "../shared/cookingStage.js";
@@ -629,6 +632,10 @@ type HttpDependencies = {
   trackedRepos: typeof trackedRepos;
   fetchPrCommentsSince: typeof fetchPrCommentsSince;
   fetchPendingReview: typeof fetchPendingReview;
+  fetchReviewAttachmentCapability: typeof fetchReviewAttachmentCapability;
+  uploadReviewAttachment: typeof uploadReviewAttachment;
+  fetchReviewViewed: typeof fetchReviewViewed;
+  writeReviewViewed: typeof writeReviewViewed;
   lookupPrIndexes: typeof lookupPrIndexes;
   commitPrFileEdit: typeof commitPrFileEdit;
   commitPrMerge: typeof commitPrMerge;
@@ -665,6 +672,10 @@ const defaultHttpDependencies: HttpDependencies = {
   trackedRepos,
   fetchPrCommentsSince,
   fetchPendingReview,
+  fetchReviewAttachmentCapability,
+  uploadReviewAttachment,
+  fetchReviewViewed,
+  writeReviewViewed,
   lookupPrIndexes,
   commitPrFileEdit,
   commitPrMerge,
@@ -2896,6 +2907,43 @@ function githubSetupResponse(auth: GithubAuthStatus, status = 401): Response {
 
 
 
+async function handleReviewAttachments(req: Request, repo: string, rawNumber: string, runtime: HttpRuntime): Promise<Response> {
+  const number = Number(rawNumber);
+  if (!CANONICAL_REPO_RE.test(repo) || !/^[1-9][0-9]*$/.test(rawNumber) || !Number.isSafeInteger(number)) return json({ error: "invalid pull request" }, 400);
+  try {
+    if (req.method === "GET") return json(await runtime.fetchReviewAttachmentCapability(repo, number), 200, { "cache-control": "no-store" });
+    const { file, accountId, repositoryId, visibility } = await readReviewAttachmentForm(req);
+    return json(await runtime.uploadReviewAttachment({ repo, number, accountId, repositoryId, visibility, name: file.name, contentType: file.type, bytes: new Uint8Array(await file.arrayBuffer()), signal: req.signal }), 201, { "cache-control": "no-store" });
+  } catch (error) {
+    if (error instanceof ReviewAttachmentError) return json({ error: error.message, code: error.code }, error.status);
+    return githubErrorResponse(error, "GitHub attachment request failed");
+  }
+}
+
+async function handleReviewViewed(req: Request, repo: string, rawNumber: string, runtime: HttpRuntime): Promise<Response> {
+  const number = Number(rawNumber);
+  if (!CANONICAL_REPO_RE.test(repo) || !/^[1-9][0-9]*$/.test(rawNumber) || !Number.isSafeInteger(number)) {
+    return json({ error: "invalid pull request" }, 400);
+  }
+  try {
+    if (req.method === "GET") return json(await runtime.fetchReviewViewed(repo, number), 200, { "cache-control": "no-store" });
+    const body: unknown = await req.json().catch(() => null);
+    if (!body || typeof body !== "object" || Array.isArray(body)) return json({ error: "invalid Viewed request" }, 400);
+    const { accountId, pullRequestId, expectedHeadOid, expectedBaseOid, path, viewed } = body as Record<string, unknown>;
+    const validId = (id: unknown): id is string => typeof id === "string" && id.length > 0 && id.length <= 512 && !/[\s\x00-\x1f]/.test(id);
+    if (!validId(accountId) || !validId(pullRequestId) || !isRepoFilePath(path) || typeof viewed !== "boolean"
+      || typeof expectedHeadOid !== "string" || !FULL_SHA_RE.test(expectedHeadOid)
+      || typeof expectedBaseOid !== "string" || !FULL_SHA_RE.test(expectedBaseOid)) return json({ error: "invalid Viewed request" }, 400);
+    return json(await runtime.writeReviewViewed({
+      repo, number, accountId, pullRequestId, expectedHeadOid: expectedHeadOid.toLowerCase(),
+      expectedBaseOid: expectedBaseOid.toLowerCase(), path, viewed,
+    }), 200, { "cache-control": "no-store" });
+  } catch (error) {
+    if (error instanceof ReviewViewedError) return json({ error: error.message, code: error.code }, error.status);
+    return githubErrorResponse(error, "GitHub Viewed state request failed");
+  }
+}
+
 async function handlePrFileEdit(req: Request, runtime: HttpRuntime): Promise<Response> {
   let body: unknown;
   try {
@@ -3184,6 +3232,30 @@ const REPO_RE = /^[^/]+\/[^/]+$/;
 const REF_RE = /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/;
 
 const MIN_SEARCH_QUERY = 2;
+
+async function handleReviewOrganization(url: URL): Promise<Response> {
+  const repo = url.searchParams.get("repo") ?? "";
+  const numberText = url.searchParams.get("number") ?? "";
+  const head = url.searchParams.get("head") ?? "";
+  const base = url.searchParams.get("base") ?? "";
+  const [owner, name] = repo.split("/");
+  if (!owner || !name || !validPrReference(owner, name, numberText) || !FULL_SHA_RE.test(head) || !FULL_SHA_RE.test(base)) {
+    return json({ error: "invalid comparison" }, 400);
+  }
+  const ctx = resolvePrContext(repo, Number(numberText));
+  if (!ctx || ctx.headSha !== head || ctx.baseSha !== base) return json({ error: "Comparison changed; reload the PR." }, 409);
+  const patch = getDiff(`${base}...${head}`);
+  if (!patch) return json({ error: "Load the PR diff before organizing it." }, 409);
+  return withSearchCtx(repo, head, head, async (source) => {
+    if (source.status !== "ok") return json({ error: `Source mirror ${source.status}; retry after it finishes.` }, 503);
+    try {
+      const result = await reviewOrganization(repo, Number(numberText), base, head, new TextDecoder().decode(patch), source.checkout);
+      return json(result);
+    } catch (error) {
+      return json({ error: String(error) }, 503);
+    }
+  });
+}
 
 async function handleRepoSearch(req: Request, url: URL): Promise<Response> {
   const repo = url.searchParams.get("repo") ?? "";
@@ -4200,6 +4272,14 @@ export function buildFetchHandler(port: number, dependencyOverrides: Partial<Htt
     ) {
       return handlePendingReview(parts[2]!, parts[3]!, parts[4]!, req, runtime);
     }
+    if ((req.method === "GET" || req.method === "POST") && parts.length === 6
+      && parts[0] === "api" && parts[1] === "pr" && parts[5] === "attachments") {
+      return handleReviewAttachments(req, `${parts[2]}/${parts[3]}`, parts[4]!, runtime);
+    }
+    if ((req.method === "GET" || req.method === "PUT") && parts.length === 6
+      && parts[0] === "api" && parts[1] === "pr" && parts[5] === "viewed") {
+      return handleReviewViewed(req, `${parts[2]}/${parts[3]}`, parts[4]!, runtime);
+    }
     if (req.method === "GET" && url.pathname === "/api/file") {
       return handleFile(url);
     }
@@ -4220,6 +4300,9 @@ export function buildFetchHandler(port: number, dependencyOverrides: Partial<Htt
     }
     if (req.method === "GET" && url.pathname === "/api/file-history/diff") {
       return handleFileHistoryDiff(req, url);
+    }
+    if (req.method === "GET" && url.pathname === "/api/review-organization") {
+      return handleReviewOrganization(url);
     }
     if (req.method === "GET" && url.pathname === "/api/repo-search") {
       return handleRepoSearch(req, url);

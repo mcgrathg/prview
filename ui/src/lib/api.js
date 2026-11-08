@@ -98,6 +98,24 @@ export async function fetchPrDetail(repo, number, { fresh = false, view = true }
   return (await fetchPrDetailSnapshot(repo, number, { fresh, view })).detail;
 }
 
+export async function fetchReviewViewed(repo, number, { signal = null, force = false } = {}) {
+  const res = await fetch(`/api/pr/${repo}/${number}/viewed${force ? "?fresh=1" : ""}`, { signal, cache: "no-store" });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw Object.assign(new Error(body?.error || `Viewed state ${res.status}`), { status: res.status, code: body?.code });
+  return body;
+}
+
+export async function writeReviewViewed(repo, number, change) {
+  const res = await fetch(`/api/pr/${repo}/${number}/viewed`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(change),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw Object.assign(new Error(body?.error || `Viewed change ${res.status}`), { status: res.status, code: body?.code });
+  return body;
+}
+
 export async function fetchPendingReview(repo, number) {
   const res = await fetch(`/api/pr/${repo}/${number}/pending-review`);
   const body = await res.json().catch(() => null);
@@ -794,4 +812,20 @@ export async function saveRestRecording(enabled) {
     body: JSON.stringify({ enabled }),
   });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `REST recording ${res.status}`);
+}
+
+export async function fetchReviewAttachmentCapability(repo, number, signal) {
+  const response = await fetch(`/api/pr/${repo}/${number}/attachments`, { signal, cache: 'no-store' });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(body?.error ?? `Attachment access ${response.status}`);
+  return body;
+}
+
+export async function uploadReviewAttachment(repo, number, capability, file, signal) {
+  const form = new FormData();
+  form.set('file', file); form.set('visibility', capability.visibility); form.set('accountId', capability.accountId); form.set('repositoryId', String(capability.repositoryId));
+  const response = await fetch(`/api/pr/${repo}/${number}/attachments`, { method: 'POST', body: form, signal });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(body?.error ?? `Attachment upload ${response.status}`);
+  return body;
 }

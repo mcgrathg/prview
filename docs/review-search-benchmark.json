@@ -1,0 +1,92 @@
+{
+  "measuredAt": "2026-11-07T19:38:25.248Z",
+  "repo": "storybookjs/storybook",
+  "number": 36948,
+  "sha": "59c927082239afee5a702036c62c8b61c192c865",
+  "fileCount": 8902,
+  "setting": "One running Cockpit HTTP server, cached local Git mirror; first request is not a cold disk or first-sync measurement. Five repeated warm samples follow each first request. Fuzzy ranking is the native function, not browser-render latency.",
+  "measurements": [
+    {
+      "name": "Native repository file listing",
+      "firstMs": 461.148375,
+      "warmMedianMs": 21.55837500000007,
+      "warmMinMs": 19.390416999999957,
+      "warmMaxMs": 29.925374999999917,
+      "samplesMs": [
+        461.148375,
+        21.55837500000007,
+        19.671958000000018,
+        19.390416999999957,
+        27.292374999999993,
+        29.925374999999917
+      ]
+    },
+    {
+      "name": "Native fuzzy file ranking",
+      "firstMs": 3.8446669999999585,
+      "warmMedianMs": 2.164790999999923,
+      "warmMinMs": 2.011292000000026,
+      "warmMaxMs": 2.309916000000044,
+      "samplesMs": [
+        3.8446669999999585,
+        2.2420830000000933,
+        2.309916000000044,
+        2.164790999999923,
+        2.083582999999976,
+        2.011292000000026
+      ]
+    },
+    {
+      "name": "Native literal code search",
+      "firstMs": 327.010542,
+      "warmMedianMs": 149.67399999999998,
+      "warmMinMs": 148.23970800000006,
+      "warmMaxMs": 199.5289170000001,
+      "samplesMs": [
+        327.010542,
+        164.111,
+        199.5289170000001,
+        149.67399999999998,
+        148.686917,
+        148.23970800000006
+      ]
+    },
+    {
+      "name": "Native relative-import definition",
+      "firstMs": 295.5855419999998,
+      "warmMedianMs": 16.32262499999979,
+      "warmMinMs": 14.541208000000097,
+      "warmMaxMs": 17.223625000000084,
+      "samplesMs": [
+        295.5855419999998,
+        16.32262499999979,
+        17.223625000000084,
+        15.518415999999888,
+        16.921457999999802,
+        14.541208000000097
+      ]
+    }
+  ],
+  "alias": {
+    "path": "code/frameworks/angular-vite/src/docgen/story-docs-args.ts",
+    "row": 4,
+    "result": {
+      "status": "ok",
+      "definition": {
+        "path": "code/frameworks/angular-vite/src/docgen/story-docs-args.ts",
+        "line": 4,
+        "text": "type ESTreeNode as Node,",
+        "symbol": "Node"
+      },
+      "candidates": [
+        {
+          "path": "code/frameworks/angular-vite/src/docgen/story-docs-args.ts",
+          "line": 4,
+          "text": "type ESTreeNode as Node,",
+          "symbol": "Node"
+        }
+      ]
+    }
+  },
+  "cancellation": "Superseded fetch aborted; subsequent latest-query response verified."
+}

@@ -1,4 +1,7 @@
 <script>
+  import CollapsibleSidebar from "./lib/CollapsibleSidebar.svelte";
+  import { parseReviewRoute } from "./lib/reviewRoute.js";
+  import { REVIEW_NAVIGATION_EVENT } from "./lib/reviewHistory.js";
   import HistoryGesture from "./lib/HistoryGesture.svelte";
   import SetAsideTray from "./lib/SetAsideTray.svelte";
   import Inbox from "./lib/Inbox.svelte";
@@ -42,36 +45,12 @@
   const EVENT_BURST_WINDOW_MS = 250;
 
   const isShell = navigator.userAgent.includes("Electron");
+  let appSidebar = $state(null);
+  const collapsibleNavigation = new URL(location.href).searchParams.get("organize") === "1";
 
   function parseRoute(hash) {
-    const match = hash.match(/^#\/pr\/([^/]+)\/([^/]+)\/(\d+)(?:\/(files|agents)|\/(actions)(?:\?([^#]+))?|\/history\/([^/?]+)(?:\?symbol=([^&]+))?)?(?:\?comment=([^&#]+))?$/i);
-    if (match) {
-      let historyPath = null;
-      let historySymbol = null;
-      const actionParams = new URLSearchParams(match[6] ?? "");
-      const actionSha = actionParams.get("sha");
-      const actionJobText = actionParams.get("job");
-      if (actionSha !== null && !/^[0-9a-f]{40}$/i.test(actionSha)) return { name: "inbox" };
-      if (actionJobText !== null && !/^\d+$/.test(actionJobText)) return { name: "inbox" };
-      try {
-        historyPath = match[7] ? decodeURIComponent(match[7]) : null;
-        historySymbol = match[8] ? decodeURIComponent(match[8]) : null;
-      } catch {
-        return { name: "inbox" };
-      }
-      return {
-        name: "detail",
-        repo: `${match[1]}/${match[2]}`,
-        number: Number(match[3]),
-        tab: historyPath ? "files" : match[5] ?? match[4] ?? "conversation",
-        actionSha,
-        actionJob: actionJobText === null ? null : Number(actionJobText),
-        historyPath,
-        historySymbol,
-        // A fresh object per parse: PrDetail reveals the comment once per navigation that names it.
-        commentTarget: parseCommentTarget(match[9]),
-      };
-    }
+    const detail = parseReviewRoute(hash);
+    if (detail) return detail;
     const actionsRunMatch = hash.match(/^#\/actions\/run\/([^/]+)\/([^/]+)\/(\d+)$/);
     if (actionsRunMatch) {
       return {
@@ -172,7 +151,13 @@
       route = next;
     };
     window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
+    window.addEventListener("popstate", onHash);
+    window.addEventListener(REVIEW_NAVIGATION_EVENT, onHash);
+    return () => {
+      window.removeEventListener("hashchange", onHash);
+      window.removeEventListener("popstate", onHash);
+      window.removeEventListener(REVIEW_NAVIGATION_EVENT, onHash);
+    };
   });
 
   $effect(() => {
@@ -287,6 +272,7 @@
   });
 
   function openPalette() {
+    appSidebar?.dismiss();
     window.dispatchEvent(new Event("cockpit:open-palette"));
   }
   function finishSetup() {
@@ -305,7 +291,8 @@
   <div
     class="app-shell"
     class:shell={isShell}
-    class:sidebar-hidden={prefs.hideSidebar && route.name !== "settings"}
+    class:collapsible-navigation={collapsibleNavigation}
+    class:sidebar-hidden={!collapsibleNavigation && prefs.hideSidebar && route.name !== "settings"}
     style="--app-banner-height: {bannerHeight}px"
   >
     <div class="app-banner" bind:clientHeight={bannerHeight}>
@@ -319,7 +306,8 @@
       {/if}
     </div>
     <div class="app-drag-region" aria-hidden="true"></div>
-    <aside class="app-sidebar" data-area="nav">
+    {#snippet appNavigationContents()}
+
       <nav class="app-nav" aria-label={route.name === "settings" ? "Settings navigation" : "Cockpit navigation"}>
         {#if route.name === "settings"}
           <a class="nav-item settings-back" href="#/">
@@ -420,7 +408,19 @@
         </div>
       {/if}
 
-    </aside>
+    {/snippet}
+    {#if collapsibleNavigation}
+      <CollapsibleSidebar bind:this={appSidebar} variant="app" heading="Workspace" storageKey="pr-cockpit:app-sidebar" defaultPinned={false} onSearch={openPalette} shortcuts={appNavigationShortcuts}>
+        <div class="app-sidebar collapsible-nav" data-area="nav">{@render appNavigationContents()}</div>
+      </CollapsibleSidebar>
+      {#snippet appNavigationShortcuts()}
+        <a href="#/" aria-label="Inbox" title="Inbox"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 4h14v12H3zm0 6h4l1 2h4l1-2h4"/></svg></a>
+        <a href="#/actions" aria-label="Actions" title="Actions"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="m8 6 5 4-5 4z"/></svg></a>
+        <a href="#/settings" aria-label="Settings" title="Settings"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="3"/><path d="M10 2v3m0 10v3M2 10h3m10 0h3M4 4l2 2m8 8 2 2M4 16l2-2m8-8 2-2"/></svg></a>
+      {/snippet}
+    {:else}
+      <aside class="app-sidebar" data-area="nav">{@render appNavigationContents()}</aside>
+    {/if}
 
     <main class="app-main">
       <div class="app-history">
@@ -430,7 +430,7 @@
       {#if setupOpen}
         <Onboarding onDone={finishSetup} onCancel={() => (setupOpen = false)} />
       {:else if route.name === "detail"}
-        <PrDetail repo={route.repo} number={route.number} tab={route.tab} actionSha={route.actionSha} actionJob={route.actionJob} historyPath={route.historyPath} historySymbol={route.historySymbol} commentTarget={route.commentTarget} refreshRevision={detailRevision} />
+        <PrDetail repo={route.repo} number={route.number} tab={route.tab} actionSha={route.actionSha} actionJob={route.actionJob} historyPath={route.historyPath} historySymbol={route.historySymbol} commentTarget={route.commentTarget} reviewLocation={route.review} refreshRevision={detailRevision} />
       {:else if route.name === "settings"}
         {#if route.section === "usage"}
           <Usage />
@@ -896,5 +896,19 @@
     .app-drag-region {
       display: none;
     }
+  }
+
+  .app-shell.collapsible-navigation { --app-rail-width:216px; grid-template-columns:var(--app-rail-width) minmax(0, 1fr); grid-template-rows:auto minmax(0, 1fr); }
+  .app-shell.collapsible-navigation:has(> :global(.review-sidebar.app[data-pinned='false'])) { --app-rail-width:48px; }
+  .app-shell.collapsible-navigation > .app-main { grid-column:2; grid-row:2; }
+  .collapsible-nav.app-sidebar { display:flex; flex-direction:column; align-items:stretch; grid-row:auto; padding:4px 8px 12px; border:0; background:transparent; }
+  .collapsible-nav .app-nav { flex-direction:column; justify-content:flex-start; gap:2px; }
+  .collapsible-nav .nav-item { flex:none; flex-direction:row; justify-content:flex-start; width:100%; min-width:0; min-height:36px; padding:8px 10px; }
+  .collapsible-nav .nav-item > span, .collapsible-nav .nav-label { display:initial; }
+  .collapsible-nav .nav-kbd { display:flex; }
+  .collapsible-nav .quota-status { width:auto; justify-content:flex-start; }
+  .collapsible-nav .quota-copy { display:flex; }
+  @media (max-width:700px) {
+    .app-shell.collapsible-navigation { --app-rail-width:48px; }
   }
 </style>

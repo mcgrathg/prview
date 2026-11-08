@@ -109,6 +109,62 @@ describe("grep / lsTree / showFile against a real repo", () => {
       symbol: "Widget",
     });
   });
+  test("findDefinition follows complete import strings through the pinned worker only", async () => {
+    const { root } = makeRepo();
+    const line = 'import { Widget } from "./app";';
+    writeFileSync(join(root, "src/consumer.ts"), line + '\nconst label = "./app";\n');
+    git(root, ["add", "-A"]);
+    git(root, ["commit", "-q", "-m", "module link"]);
+    const sha = git(root, ["rev-parse", "HEAD"]).trim();
+    const query = { repo: "owner/repo", position: { line: 1, character: line.indexOf('./app') } };
+    expect((await findDefinition(root, sha, "./app", "src/consumer.ts", undefined, query)).definition).toEqual({
+      path: "src/app.ts", line: 1, text: "export function Widget() { return 1; }", symbol: "./app",
+    });
+    expect(await findDefinition(root, sha, "./other", "src/consumer.ts", undefined, query)).toEqual({ definition: null, candidates: [] });
+    expect(await findDefinition(root, sha, "./app", "src/consumer.ts", undefined, {
+      repo: "owner/repo", position: { line: 2, character: 16 },
+    })).toEqual({ definition: null, candidates: [] });
+  });
+
+  test("findDefinition leaves an unresolved package alias unresolved despite unrelated declarations", async () => {
+    const { root } = makeRepo();
+    writeFileSync(join(root, "src/unrelated.ts"), "export type Node = { unrelated: true };\n");
+    writeFileSync(join(root, "src/consumer.ts"), 'import { type ESTreeNode as Node } from "missing/internal/ast";\nexport const visit = (node: Node) => node;\n');
+    git(root, ["add", "-A"]);
+    git(root, ["commit", "-q", "-m", "unresolved package alias"]);
+    const sha = git(root, ["rev-parse", "HEAD"]).trim();
+
+    for (const query of [undefined, { repo: "owner/repo", position: { line: 2, character: 28 } }]) {
+      const result = await findDefinition(root, sha, "Node", "src/consumer.ts", undefined, query);
+      expect(result.definition).toBeNull();
+      expect(result.candidates).toEqual([]);
+    }
+  });
+
+  test("findDefinition follows a package type export instead of its local import alias", async () => {
+    const { root } = makeRepo();
+    writeFileSync(join(root, "tsconfig.json"), '{ "compilerOptions": { "customConditions": ["code"] } }');
+    mkdirSync(join(root, "packages/ast/src"), { recursive: true });
+    writeFileSync(join(root, "packages/ast/package.json"), JSON.stringify({
+      name: "@example/ast",
+      exports: { "./internal/ast": { types: "./dist/ast.d.ts", code: "./src/index.ts" } },
+    }));
+    writeFileSync(join(root, "packages/ast/src/index.ts"), 'export type { Node as ESTreeNode } from "./ast";\n');
+    writeFileSync(join(root, "packages/ast/src/ast.ts"), "export type Node = { kind: string };\n");
+    writeFileSync(join(root, "src/consumer.ts"), 'import { type ESTreeNode as Node } from "@example/ast/internal/ast";\nexport const visit = (node: Node) => node;\n');
+    git(root, ["add", "-A"]);
+    git(root, ["commit", "-q", "-m", "package type alias"]);
+    const sha = git(root, ["rev-parse", "HEAD"]).trim();
+
+    const result = await findDefinition(root, sha, "Node", "src/consumer.ts", undefined, {
+      repo: "owner/repo",
+      position: { line: 2, character: 28 },
+    });
+    expect(result.definition).toEqual({
+      path: "packages/ast/src/ast.ts", line: 1, text: "export type Node = { kind: string };", symbol: "Node",
+    });
+  });
+
   test("findDefinition follows an aliased relative import with duplicate global symbols", async () => {
     const { root } = makeRepo();
     writeFileSync(join(root, "src/other.ts"), "export function Widget() { return 2; }\n");

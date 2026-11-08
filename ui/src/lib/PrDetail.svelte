@@ -1,4 +1,17 @@
 <script>
+  import { createActor } from "xstate";
+  import { createReviewConfirmation } from "./reviewConfirmation.js";
+  import { reviewShortcutInfo } from "./reviewShortcutInfo.js";
+  import { normalizeReviewState, buildReviewHash } from "./reviewRoute.js";
+  import { beginReviewFileDrag, isReviewFileDragging } from "./reviewFileDrag.js";
+  import { relatedCandidates } from "../../../shared/review-organization/relationships.ts";
+  import { canChangeViewed } from "./reviewViewedGuard.js";
+  import { reviewViewedMachine } from "./reviewViewedMachine.js";
+  import { reviewNavigationMachine } from "./reviewNavigation.js";
+  import { commitReviewLocation } from "./reviewHistory.js";
+  import WorkspaceDiff from "./WorkspaceDiff.svelte";
+  import WorkspaceSource from "./WorkspaceSource.svelte";
+  import ReviewWorkspace from "./ReviewWorkspace.svelte";
   import { isSetAside, putAside, bringBack } from "./setAside.svelte.js";
   import { flushSync, onDestroy, tick, untrack } from "svelte";
   import {
@@ -79,6 +92,10 @@
   import ConflictEditor from "./ConflictEditor.svelte";
   import RangePicker from "./RangePicker.svelte";
   import FileTree from "./FileTree.svelte";
+  import ReviewOrganization from "./ReviewOrganization.svelte";
+  import ReviewSidebar from "./CollapsibleSidebar.svelte";
+  let reviewSidebar = $state(null);
+  import { organizationKey } from "../../../shared/review-organization/machine.ts";
   import Kbd from "./Kbd.svelte";
   import Thread from "./Thread.svelte";
   import { shareSnapshot } from "./shareSnapshot.js";
@@ -98,7 +115,7 @@
     { value: "REQUEST_CHANGES", label: "Request changes", tone: "red" },
   ];
 
-  let { repo, number, tab, actionSha = null, actionJob = null, historyPath = null, historySymbol = null, commentTarget = null, refreshRevision = 0 } = $props();
+  let { repo, number, tab, actionSha = null, actionJob = null, historyPath = null, historySymbol = null, commentTarget = null, reviewLocation = null, refreshRevision = 0 } = $props();
   let handledRefreshRevision = refreshRevision;
   loadPrIndex();
 
@@ -108,7 +125,133 @@
 
   let pr = $state.raw(null);
   let actionsRunUrl = $state(null);
-  let files = $state.raw([]);
+  const organizationEnabled = new URL(location.href).searchParams.get("organize") === "1";
+  const navigationActor = createActor(reviewNavigationMachine, { input: { review: untrack(() => reviewLocation) } }).start();
+  onDestroy(() => navigationActor.stop());
+  let reviewState = $derived(normalizeReviewState(reviewLocation));
+  let workspace = $state(null);
+  let workspaceEnabled = $derived(organizationEnabled && Boolean(reviewState.panes?.length));
+  let activeReviewPane = $derived(reviewState.panes?.find(p => p.id === reviewState.active));
+  let searchOrigin = $derived(workspaceEnabled ? activeReviewPane ?? reviewState : reviewState);
+  let searchRevision = $derived(searchOrigin.side === 'left' ? searchOrigin.base ?? organizationComparison.base : searchOrigin.rev ?? organizationComparison.head);
+  let definitionContext = $derived(JSON.stringify([workspaceEnabled ? activeReviewPane?.id : 'single', searchOrigin.file, searchOrigin.view, searchOrigin.side, searchRevision]));
+  let restoredLocation = '';
+  function navigateReview(patch, mode = 'push') {
+    if (!organizationEnabled || !pr) return;
+    const next = normalizeReviewState({ ...reviewState, rev: range?.head ?? pr.headRefOid, base: range?.base ?? pr.baseRefOid, ...patch });
+    navigationActor.send({ type: 'NAVIGATE', review: next, historyMode: mode });
+    commitReviewLocation(repo, number, next, mode);
+  }
+  function navigatePane(patch, mode = 'push') {
+    if (patch.file && patch.view === 'source') {
+      const pane = workspaceEnabled ? reviewState.panes.find(p => p.id === reviewState.active) : null;
+      const origin = pane ?? reviewState;
+      const rev = origin.side === 'left' ? origin.base ?? organizationComparison.base : origin.rev ?? organizationComparison.head;
+      const location = { ...patch, rev, base: origin.base ?? organizationComparison.base, side: 'right' };
+      if (workspaceEnabled) { workspace?.updatePane(reviewState.active, location); return; }
+      navigateReview(location, mode);
+      return;
+    }
+    navigateReview(patch, mode);
+  }
+  function openBeside(path) {
+    if (!finishFileEdit()) return;
+    if (workspaceEnabled) { workspace?.openFile(path, true, { rev: organizationComparison.head, base: organizationComparison.base, layout: reviewState.layout }); return; }
+    const first = reviewState.file ?? selectedPath ?? files[0]?.path;
+    const panes = [];
+    if (first) panes.push({ id: 'p1', file: first, view: 'diff', layout: reviewState.layout, rev: organizationComparison.head, base: organizationComparison.base });
+    panes.push({ id: 'p2', file: path, view: 'diff', layout: reviewState.layout, rev: organizationComparison.head, base: organizationComparison.base });
+    navigateReview({ panes, active: 'p2', file: path, view: 'diff' });
+  }
+  function workspaceChanged({ panes, active }, mode = 'push') {
+    const focused = panes.find(p => p.id === active);
+    navigateReview({ panes: panes.length ? panes : undefined, active, ...(focused?.file ? { file: focused.file, line: focused.line, side: focused.side, view: focused.view === 'source' ? 'source' : 'diff', layout: focused.layout } : {}) }, mode);
+  }
+  async function followDefinition(symbol, fromPath, position, pane = null) {
+    // The return entry names the exact origin, before an asynchronous lookup changes location.
+    if (workspaceEnabled && pane) { workspace?.focusPane(pane.id); workspace?.updatePane(pane.id, { line: position?.line ?? null, side: position?.side ?? pane.side ?? 'right' }, 'replace'); await tick(); }
+    else { navigateReview({ file: fromPath, line: position?.line ?? null, side: position?.side ?? 'right', view: 'diff' }, 'replace'); await tick(); }
+    telescope?.openDefinition(symbol, fromPath, position);
+  }
+  $effect(() => {
+    if (!organizationEnabled || !pr || tab !== 'files') return;
+    const target = reviewState;
+    untrack(() => {
+      navigationActor.send({ type: 'RESTORE', review: target });
+      const key = target.rev && target.base && (target.rev !== pr.headRefOid || target.base !== pr.baseRefOid) ? `r${target.base}:${target.rev}` : 'all';
+      if (rangeKey !== key) rangeKey = key;
+    });
+  });
+  $effect(() => {
+    if (!organizationEnabled || !pr || tab !== 'files' || diffState !== 'ready') return;
+    const target = reviewState;
+    const key = JSON.stringify([repo, number, displayedDiffKey, target.file, target.line, target.side, target.view, Boolean(target.panes)]);
+    const sequence = navigationActor.getSnapshot().context.sequence;
+    if (key === restoredLocation) { navigationActor.send({ type: 'APPLIED', sequence }); return; }
+    restoredLocation = key;
+    untrack(async () => {
+      if (target.file && target.view === 'diff' && !target.panes?.length) {
+        if (!files.some(f => f.path === target.file) && comparisonFiles.some(f => f.path === target.file)) await organizationPanel?.revealFile(target.file, false);
+        await tick();
+        if (navigationActor.getSnapshot().context.sequence !== sequence) return;
+        revealChangedFile(target.file, target.line, target.side);
+      }
+      navigationActor.send({ type: 'APPLIED', sequence });
+    });
+  });
+  const viewedActor = createActor(reviewViewedMachine).start();
+  let viewedSnapshot = $state(viewedActor.getSnapshot());
+  const viewedSubscription = viewedActor.subscribe(next => viewedSnapshot = next);
+  onDestroy(() => { viewedSubscription.unsubscribe(); viewedActor.stop(); });
+  let githubViewed = $derived(viewedSnapshot.context.snapshot);
+  let viewedAligned = $derived(!!pr && githubViewed?.repo === repo && githubViewed?.number === number && githubViewed?.headOid === pr.headRefOid && githubViewed?.baseOid === pr.baseRefOid);
+  $effect(() => {
+    if (!organizationEnabled || !pr) return;
+    viewedActor.send({ type: 'CONTEXT', repo, number, head: pr.headRefOid, base: pr.baseRefOid });
+  });
+  $effect(() => {
+    if (!organizationEnabled) return;
+    viewedFiles = viewedAligned ? new Set(githubViewed.files.filter(file => file.state === 'VIEWED').map(file => file.path)) : new Set();
+  });
+  $effect(() => {
+    if (!organizationEnabled) return;
+    const refresh = () => viewedActor.send({ type: 'REFRESH' });
+    window.addEventListener('focus', refresh);
+    const visibility = () => { if (document.visibilityState === 'visible') refresh(); };
+    document.addEventListener('visibilitychange', visibility);
+    return () => { window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', visibility); };
+  });
+  let collapseIdentity = '';
+  const collapseKey = () => `prview:collapsed:v1:${repo}#${number}`;
+  function saveCollapsedFiles() { try { localStorage.setItem(collapseKey(), JSON.stringify([...collapsedFiles])); } catch {} }
+  $effect(() => {
+    if (!pr || diffState !== 'ready') return;
+    const key = `${repo}#${number}`;
+    if (collapseIdentity === key) return;
+    collapseIdentity = key;
+    try { const paths = JSON.parse(localStorage.getItem(collapseKey()) ?? '[]'); collapsedFiles = new Set(Array.isArray(paths) ? paths.filter(path => typeof path === 'string') : []); } catch { collapsedFiles = new Set(); }
+  });
+  let comparisonFiles = $state.raw([]);
+  let organizationPanel = $state(null);
+  let organization = $state.raw(null);
+  let organizationComparison = $derived({ repo, number, base: range?.base ?? pr?.baseRefOid ?? "", head: range?.head ?? pr?.headRefOid ?? "" });
+  let organizationActive = $derived(organizationEnabled && organization?.key === organizationKey(organizationComparison));
+  let files = $derived.by(() => {
+    if (!organizationActive) return comparisonFiles;
+    const byPath = new Map(comparisonFiles.map(file => [file.path, file]));
+    return organization.paths.map(path => byPath.get(path)).filter(Boolean);
+  });
+  let organizationCollapsed = $derived(organizationActive ? new Set([...collapsedFiles, ...organization.folded]) : collapsedFiles);
+  function receiveOrganization(next) {
+    const hadModel = organization?.key === next.key;
+    const selected = hadModel ? files[fileIndex]?.path : null;
+    const previousPaths = hadModel ? files.map(file => file.path).join("\n") : "";
+    organization = next;
+    fileIndex = Math.max(0, files.findIndex(file => file.path === selected));
+    if (selected && !workspaceEnabled && previousPaths !== files.map(file => file.path).join("\n")) {
+      requestAnimationFrame(() => scrollToFile(fileIndex));
+    }
+  }
   // Attribute-generated paths for the displayed diff's commits; always replaced together with `files`.
   let generatedPaths = $state.raw(new Set());
   // Patterns this visit committed as generated, hidden until the new head's attributes classify them.
@@ -187,7 +330,7 @@
     const loadingTimer = cachedDetail ? null : setTimeout(() => {
       if (activeFetch === token && !pr && !error) showLoading = true;
     }, 250);
-    files = [];
+    comparisonFiles = [];
     generatedPaths = new Set();
     classifiedDiffKey = null;
     excludedFoldAppliedFor = null;
@@ -444,7 +587,7 @@
     diffDocument = diff.document;
     syncViewedFiles(diff.files);
     displayedDiffKey = diff.dkey;
-    files = [...diff.files].sort((left, right) => left.path.localeCompare(right.path));
+    comparisonFiles = [...diff.files].sort((left, right) => left.path.localeCompare(right.path));
     generatedPaths = diff.generated;
     classifiedDiffKey = diff.classifiedKey;
     fileIndex = 0;
@@ -552,7 +695,7 @@
         rangeKey = "all";
         rewriteFallback = true;
       } else {
-        files = [];
+        comparisonFiles = [];
         generatedPaths = new Set();
         diffState = "error";
         diffError = res.error;
@@ -1331,6 +1474,7 @@
       return;
     }
     mergeMenuOpen = false;
+    mergeShortcutScope = shortcutScope();
     forceMergeConfirm = force;
     mergeConfirm = !force;
   }
@@ -1350,7 +1494,9 @@
 
   async function confirmMergeDecision() {
     const force = forceMergeConfirm;
+    const valid = !shortcutDialogOrigin || mergeShortcutScope === shortcutScope();
     cancelMergeDecision();
+    if (!valid) return;
     await submitMerge(force);
   }
 
@@ -1399,11 +1545,61 @@
   let githubAutoMergeEnabled = $derived(Boolean(pr.autoMergeRequest));
   // one modal serves every plain yes/no confirmation, each entry carrying its own copy and action
   let confirmAction = $state(null);
+  const shortcutConfirmation = createReviewConfirmation();
+  let shortcutConfirmationSnapshot = $state(shortcutConfirmation.actor.getSnapshot());
+  const shortcutSubscription = shortcutConfirmation.actor.subscribe(next => shortcutConfirmationSnapshot = next);
+  let shortcutRequest = $derived(shortcutConfirmationSnapshot.context.pending);
+  let pickerShortcutScope = $state(null);
+  let mergeShortcutScope = null;
+  let shortcutDialogOrigin = $state(false);
+  let shortcutDialogScope = null;
+  const shortcutScope = () => JSON.stringify([repo, number, pr?.headRefOid]);
+  let previousShortcutScope = '';
+  $effect(() => {
+    const scope = shortcutScope();
+    if (scope !== previousShortcutScope) {
+      previousShortcutScope = scope;
+      untrack(() => { shortcutConfirmation.cancel(); if (pickerShortcutScope) pickerMode = null; pickerShortcutScope = null; if (shortcutDialogOrigin) { mergeConfirm = false; forceMergeConfirm = false; confirmAction = null; } });
+    }
+    if (!pickerMode) pickerShortcutScope = null;
+    if (!confirmAction && !mergeConfirm && !forceMergeConfirm) shortcutDialogOrigin = false;
+  });
+  onDestroy(() => { shortcutSubscription.unsubscribe(); shortcutConfirmation.stop(); });
+  async function confirmShortcut(title, message) {
+    if (!organizationEnabled) return true;
+    return shortcutConfirmation.request({ scope: shortcutScope(), title, message: `${repo}#${number} · ${pr?.headRefOid?.slice(0, 7)}\n${message}` });
+  }
+  function requestFromShortcut(action) {
+    shortcutDialogOrigin = organizationEnabled;
+    shortcutDialogScope = shortcutScope();
+    return action();
+  }
+  async function toggleViewedFromShortcut(file, comparison = organizationComparison) {
+    if (!organizationEnabled) { if (file) setFileViewed(file, !viewedFiles.has(file.path), comparison); return; }
+    if (!file || !canChangeViewed({ rangeKey, comparison, pullRequest: pr, snapshot: githubViewed, state: viewedSnapshot.value })) return;
+    const viewed = !viewedFiles.has(file.path);
+    if (await confirmShortcut(`${viewed ? 'Mark viewed' : 'Mark unviewed'}?`, `Save ${file.path} as ${viewed ? 'viewed' : 'unviewed'} in your GitHub progress. This persists for your account; it does not publish a review.`)) setFileViewed(file, viewed, comparison);
+  }
+  async function chooseShortcutPicker(login) {
+    const mode = pickerMode;
+    const submit = mode === 'assign' ? submitAssign : mode === 'labels' ? submitLabel : submitRequestReviewer;
+    if (organizationEnabled && pickerShortcutScope) {
+      if (pickerShortcutScope !== shortcutScope()) return;
+      const removing = (mode === 'assign' ? assignedLogins : mode === 'labels' ? appliedLabels : requestedLogins).has(login);
+      const action = mode === 'assign' ? `${removing ? 'Unassign' : 'Assign'} ${login}` : mode === 'labels' ? `${removing ? 'Remove' : 'Add'} label ${login}` : `${removing ? 'Cancel' : 'Request'} review from ${login}`;
+      if (!await confirmShortcut(`${action}?`, 'This changes the shared GitHub pull request. Other people can see the change, and GitHub may notify them.')) return;
+      const current = mode === 'assign' ? assignedLogins : mode === 'labels' ? appliedLabels : requestedLogins;
+      if (pickerMode !== mode || current.has(login) !== removing) { showFlash('This selection changed while the confirmation was open. Choose it again.'); return; }
+    }
+    await submit(login);
+  }
+
 
   function runConfirmAction() {
     const action = confirmAction;
+    const valid = !shortcutDialogOrigin || shortcutDialogScope === shortcutScope();
     confirmAction = null;
-    action.run();
+    if (valid) action?.run();
   }
 
   function requestClose() {
@@ -1415,6 +1611,7 @@
     confirmAction = {
       title: `${enable ? "Arm" : "Disarm"} the auto-merge bot for #${number}?`,
       confirmLabel: enable ? "Arm" : "Disarm",
+      message: shortcutDialogOrigin ? "This bot can push commits and merge the shared pull request automatically. Other people will see its changes." : undefined,
       run: () => submitAutoMerge(enable),
     };
   }
@@ -2132,6 +2329,7 @@
   }
 
   function openLabelPicker() {
+    pickerShortcutScope = null;
     pickerMode = "labels";
     loadRepoLabels();
   }
@@ -2237,7 +2435,7 @@
   let collapsedFiles = $state(new Set());
   let viewedFiles = $state(new Set());
   let hoveredDiffPath = $state(null);
-  let selectedPath = $derived(files[fileIndex]?.path ?? null);
+  let selectedPath = $derived((workspaceEnabled ? reviewState.panes.find(p => p.id === reviewState.active)?.file : null) ?? files[fileIndex]?.path ?? null);
 
   let hiddenHere = $derived(prefs.hiddenReviewPaths[repo] ?? []);
   let testPattern = $derived(testMatcher(prefs.testPathRegex, [...hiddenHere, ...markedGenerated]));
@@ -2274,7 +2472,7 @@
   const fileFilters = ["all", "hide", "only"];
   const fileFilterLabels = { all: "All files", hide: "Hide tests/generated", only: "Only tests/generated" };
   let fileFilter = $derived(excludedChoice ?? (prefs.hideExcludedDefault ? "hide" : "all"));
-  let treeFiles = $derived(fileFilter === "hide" ? includedFiles : fileFilter === "only" ? excludedFiles : files);
+  let treeFiles = $derived(organizationEnabled ? files : fileFilter === "hide" ? includedFiles : fileFilter === "only" ? excludedFiles : files);
 
   function startTreeResize(e) {
     e.preventDefault();
@@ -2303,6 +2501,7 @@
   let excludedFoldAppliedFor = null;
 
   function applyExcludedFolds(mode) {
+    if (organizationEnabled) return;
     const next = new Set(collapsedFiles);
     for (const path of groupFolds) if (!viewedFiles.has(path)) next.delete(path);
     const hidden = mode === "hide" ? excludedFiles : mode === "only" ? includedFiles : [];
@@ -2318,11 +2517,18 @@
   });
 
   function toggleExcludedFiles() {
+    if (organizationEnabled) { organizationPanel?.toggleTests(); return; }
     excludedChoice = fileFilters[(fileFilters.indexOf(fileFilter) + 1) % fileFilters.length];
     applyExcludedFolds(excludedChoice);
   }
 
   async function toggleDiffLayout() {
+    if (organizationEnabled) {
+      const layout = reviewState.layout === 'split' ? 'unified' : 'split';
+      if (workspaceEnabled) workspace?.updatePane(reviewState.active, { layout });
+      else navigateReview({ layout });
+      return;
+    }
     const previous = prefs.diffLayout;
     prefs.diffLayout = previous === "split" ? "unified" : "split";
     try {
@@ -2356,8 +2562,7 @@
   }
 
   function syncViewedFiles(nextFiles) {
-    const nextCollapsed = new Set(collapsedFiles);
-    for (const path of viewedFiles) nextCollapsed.delete(path);
+    if (organizationEnabled) return;
 
     const records = loadViewedFileRecords();
     const nextViewed = new Set();
@@ -2369,30 +2574,24 @@
       const fingerprint = fileDiffFingerprint(file);
       if (records[file.path]?.fingerprint === fingerprint) {
         nextViewed.add(file.path);
-        nextCollapsed.add(file.path);
       } else {
         delete records[file.path];
       }
     }
     viewedFiles = nextViewed;
-    collapsedFiles = nextCollapsed;
     saveViewedFileRecords(records);
   }
 
-  function updateViewedFiles(targetFiles, viewed) {
-    const nextViewed = new Set(viewedFiles);
-    const nextCollapsed = new Set(collapsedFiles);
-    for (const file of targetFiles) {
-      if (viewed) {
-        nextViewed.add(file.path);
-        nextCollapsed.add(file.path);
-      } else {
-        nextViewed.delete(file.path);
-        nextCollapsed.delete(file.path);
-      }
+  function updateViewedFiles(targetFiles, viewed, comparison = organizationComparison) {
+    if (organizationEnabled) {
+      // Native GitHub writes are confirmed individually; batch gestures never imply review.
+      if (!canChangeViewed({ rangeKey, comparison, pullRequest: pr, snapshot: githubViewed, state: viewedSnapshot.value })) return;
+      if (targetFiles.length === 1) viewedActor.send({ type: 'TOGGLE', path: targetFiles[0].path, viewed });
+      return;
     }
+    const nextViewed = new Set(viewedFiles);
+    for (const file of targetFiles) { if (viewed) nextViewed.add(file.path); else nextViewed.delete(file.path); }
     viewedFiles = nextViewed;
-    collapsedFiles = nextCollapsed;
 
     const records = loadViewedFileRecords();
     for (const file of targetFiles) {
@@ -2402,12 +2601,16 @@
     saveViewedFileRecords(records);
   }
 
-  function setFileViewed(file, viewed) {
-    updateViewedFiles([file], viewed);
+  function setFileViewed(file, viewed, comparison = organizationComparison) {
+    updateViewedFiles([file], viewed, comparison);
   }
 
   function toggleFileCollapse(file) {
-    setFileViewed(file, !collapsedFiles.has(file.path));
+    const next = new Set(collapsedFiles);
+    if ((organizationEnabled ? organizationCollapsed : collapsedFiles).has(file.path)) next.delete(file.path); else next.add(file.path);
+    collapsedFiles = next;
+    saveCollapsedFiles();
+    if (organizationEnabled) organizationPanel?.toggleFold(file.path);
   }
 
   function focusTarget(selector) {
@@ -2448,9 +2651,10 @@
     const anchored = !threadSplit.unanchored.some((t) => t.id === firstUnresolved.id);
     if (anchored) {
       if (tab !== "files") goToTab("files");
-      if (collapsedFiles.has(firstUnresolved.path)) {
-        const file = files.find((item) => item.path === firstUnresolved.path);
-        if (file) setFileViewed(file, false);
+      if (organizationCollapsed.has(firstUnresolved.path)) {
+        collapsedFiles = new Set([...collapsedFiles].filter(path => path !== firstUnresolved.path));
+        saveCollapsedFiles();
+        if (organizationEnabled) void organizationPanel?.revealFile(firstUnresolved.path, false);
       }
       revealAnchoredReply(firstUnresolved.path, firstUnresolved.id);
     } else {
@@ -2686,6 +2890,10 @@
   });
 
   function selectFile(i) {
+    if (organizationEnabled && files[i]) {
+      openChangedFile(files[i].path);
+      return;
+    }
     fileIndex = i;
     scrollToFile(i);
   }
@@ -2696,13 +2904,27 @@
   }
 
   function openChangedFile(path) {
+    if (organizationEnabled) {
+      if (workspaceEnabled) workspace?.openFile(path, false, { rev: organizationComparison.head, base: organizationComparison.base, side: 'right' });
+      else navigateReview({ file: path, line: null, side: 'right', view: 'diff', search: undefined });
+      return;
+    }
+    revealChangedFile(path);
+  }
+  function revealChangedFile(path, line = null, side = 'right') {
     const i = files.findIndex((f) => f.path === path);
-    if (i < 0) return;
+    if (i < 0) {
+      if (organizationEnabled && comparisonFiles.some(file => file.path === path)) void organizationPanel?.revealFile(path);
+      return;
+    }
     fileIndex = i;
     if (tab !== "files") goToTab("files");
     let tries = 20;
     const reveal = () => {
-      if (fileSection(i)) scrollToFile(i);
+      if (fileSection(i)) {
+        scrollToFile(i);
+        if (line) requestAnimationFrame(() => fileSection(i)?.querySelector(`[data-${side === 'left' ? 'old' : 'new'}-line="${line}"]`)?.scrollIntoView({ block: 'center' }));
+      }
       else if (--tries > 0) requestAnimationFrame(reveal);
     };
     requestAnimationFrame(reveal);
@@ -2723,7 +2945,13 @@
   }
 
   function selectRange(key) {
-    if (finishFileEdit()) rangeKey = key;
+    if (finishFileEdit()) {
+      rangeKey = key;
+      if (organizationEnabled) {
+        // Range selection resolves synchronously from captured commit metadata.
+        queueMicrotask(() => navigateReview({ rev: range?.head ?? pr.headRefOid, base: range?.base ?? pr.baseRefOid, panes: undefined, active: undefined }));
+      }
+    }
   }
 
   let telescope = $state(null);
@@ -2738,7 +2966,7 @@
     if (!finishFileEdit()) return;
     if (rangeKey !== "all") {
       rangeKey = "all";
-      files = [];
+      comparisonFiles = [];
       generatedPaths = new Set();
     }
     const parent = `#/pr/${repo}/${number}/files`;
@@ -2757,6 +2985,7 @@
     let downPressed = false;
     let upPressed = false;
     function onKey(e) {
+      if (isReviewFileDragging()) return;
       if (e.defaultPrevented) return;
       const keyOwner = prKeyOwner(e);
       if (keyOwner === "blur") {
@@ -2824,12 +3053,12 @@
         if (e.key === "Escape") {
           mergeMenuOpen = false;
           e.preventDefault();
-        } else if (e.key === "M" && liveState && requestForceMergeShortcut()) {
+        } else if (e.key === "M" && liveState && requestFromShortcut(requestForceMergeShortcut)) {
           e.preventDefault();
         }
         return;
       }
-      if (mergeConfirm || forceMergeConfirm || confirmAction) return;
+      if (mergeConfirm || forceMergeConfirm || confirmAction || shortcutRequest) return;
       if (e.key === "Escape") {
         if (tab === "files") goToTab("conversation");
         else if (finishFileEdit()) location.hash = "#/";
@@ -2837,15 +3066,6 @@
         return;
       }
       const page = document.querySelector(".page");
-      if (e.key === "b" && !e.shiftKey) {
-        e.preventDefault();
-        if (e.repeat || !pr || !finishFileEdit()) return;
-        const item = { ...pr, repo, number };
-        if (isSetAside(item)) {
-          if (bringBack(item)) showFlash("PR brought back to the main view");
-        } else if (putAside(item)) location.hash = "#/";
-        return;
-      }
       if (e.key === "g" && !e.shiftKey) {
         const now = Date.now();
         if (now - lastG < 400) {
@@ -2865,75 +3085,15 @@
         e.preventDefault();
         return;
       }
-      if (e.key === "d") {
-        goToTab(tab === "files" ? "conversation" : "files");
-      } else if (tab === "files" && e.key === "J") {
-        selectFile(Math.min(files.length - 1, fileIndex + 1));
-      } else if (tab === "files" && e.key === "K") {
-        selectFile(Math.max(0, fileIndex - 1));
-      } else if (e.key === "j" || e.key === "ArrowDown") {
-        downPressed = true;
-        holdScrollStart(page, 1);
+      if (e.key === "j" || e.key === "ArrowDown") {
+        downPressed = true; holdScrollStart(page, 1);
       } else if (e.key === "k" || e.key === "ArrowUp") {
-        upPressed = true;
-        holdScrollStart(page, -1);
-      } else if (tab === "files" && e.key === "x") {
-        toggleExcludedFiles();
-      } else if (tab === "files" && e.key === "h") {
-        if (files[fileIndex]) openFileHistory(files[fileIndex].path);
-      } else if (e.key === "x") {
-        if (liveState && !mergeMutation && !closeMutation) requestClose();
-      } else if (tab === "files" && e.key === "c") {
-        rangeOpen = true;
-      } else if (tab === "conversation" && e.key === "c") {
-        if (!prefs.newestCommentsFirst) showTimelineThrough(timeline.length - 1);
-        focusTarget("#composer-input");
-      } else if (tab === "conversation" && e.key === "v" && canReview) {
-        focusTarget("#verdict-control");
-      } else if (e.key === "r") {
-        revealReply();
-      } else if (e.key === "e") {
-        openInlineEditor();
-      } else if (e.key === "E") {
-        openExternalEditor();
-      } else if (e.key === "m") {
-        if (mergeGate.action === "merge" && !mergeMutation) requestMerge();
-        else if (mergeGate.reason) mergeFlash.show(mergeGate.reason);
-      } else if (e.key === "M") {
-        requestForceMergeShortcut();
-      } else if (e.key === "u" && liveState) {
-        // mergeStateStatus reports BLOCKED over BEHIND, so an out-of-date branch can't be detected reliably.
-        if (!updateMutation) submitUpdateBranch();
-      } else if (e.key === "s") {
-        pickerMode = "assign";
-      } else if (e.key === "q") {
-        pickerMode = "review";
-      } else if (e.key === "l") {
-        openLabelPicker();
-      } else if (e.key === "o") {
-        const url = tab === "actions" ? actionsRunUrl : pr?.url;
-        if (url) window.open(url, "_blank", "noopener");
-      } else if (e.key === "t" && pr?.localCheckoutPath && !onLocalBranch) {
-        if (!localBranchBusy) switchToLocalBranch();
-      } else if (e.key === "p") {
-        promptOpen = true;
-      } else if (quickActions.some((a) => a.keybind === e.key)) {
-        runQuickAction(quickActions.find((a) => a.keybind === e.key));
-      } else if (autofixDef?.keybind === e.key && fixShortcutTarget) {
-        if (fixShortcutTarget === "ci") requestCiFix();
-        else if (fixShortcutTarget === "conflict") requestConflictResolution();
-        else requestAutofix();
-      } else if (keybindAgents.some((a) => a.keybind === e.key)) {
-        const def = keybindAgents.find((a) => a.keybind === e.key);
-        if (def.id === "fixer") {
-          if (!autoMergeMutation) requestAutoMerge();
-        } else if (def.id === "autofix") {
-          if (!autofixBusy && agent?.state !== "running" && !prIsGreen && !mergedState) requestAutofix();
-        } else if (!customBusy && agent?.state !== "running") {
-          requestCustomAgent(def);
-        }
+        upPressed = true; holdScrollStart(page, -1);
       } else {
-        return;
+        if (e.repeat) return;
+        const shortcuts = ['d', 'J', 'K', 'x', 'h', 'c', 'v', 'r', 'e', 'E', 'm', 'M', 'u', 's', 'q', 'l', 'o', 't', 'p', 'b', ...quickActions.map(a => a.keybind), ...keybindAgents.map(a => a.keybind)];
+        if (!shortcuts.includes(e.key) || (e.key === 'v' && tab === 'files')) return;
+        void runReviewShortcut(e.key);
       }
       e.preventDefault();
     }
@@ -3011,7 +3171,7 @@
     { key: "J / K", label: "file" },
     { key: "v", label: "toggle file viewed" },
     { key: "c", label: "changes range" },
-    { key: "x", label: "cycle file filter" },
+    { key: "x", label: organizationEnabled ? "toggle tests" : "cycle file filter" },
     { key: "h", label: "file history" },
     { key: "r", label: "reply" },
     { key: "e", label: "edit inline" },
@@ -3034,13 +3194,108 @@
     ...localCheckoutKeys,
     { key: "esc", label: "back" },
   ]);
+  async function runReviewShortcut(key) {
+    if (shortcutRequest || confirmAction || mergeConfirm || forceMergeConfirm || pickerMode || rangeOpen || historyOpen || telescopeOpen || quotaMergeModal || mergeMenuOpen || reviewMenuOpen) return;
+    const command = footerCommands.find(item => item.key === key);
+    if (organizationEnabled && command?.disabledReason) { showFlash(command.disabledReason); return; }
+      if (key === "Escape") {
+        if (tab === 'files') goToTab('conversation'); else if (finishFileEdit()) location.hash = '#/';
+      } else if (key === "b") {
+        if (!pr || !finishFileEdit()) return;
+        const item = { ...pr, repo, number };
+        const aside = isSetAside(item);
+        if (!await confirmShortcut(aside ? 'Bring this PR back?' : 'Set this PR aside?', 'This saves your personal Cockpit inbox state. It does not change the shared GitHub pull request.')) return;
+        if (isSetAside(item) !== aside) { showFlash('Your inbox state changed. Try the command again.'); return; }
+        if (aside) { if (bringBack(item)) showFlash('PR brought back to the main view'); }
+        else if (putAside(item)) location.hash = '#/';
+      } else if (key === "v" && tab === "files") {
+        const pane = reviewState.panes?.find(p => p.id === reviewState.active);
+        await toggleViewedFromShortcut(files.find(file => file.path === selectedPath), { head: pane?.rev ?? organizationComparison.head, base: pane?.base ?? organizationComparison.base });
+      } else if (key === "d") {
+        goToTab(tab === "files" ? "conversation" : "files");
+      } else if (tab === "files" && key === "J") {
+        selectFile(Math.min(files.length - 1, Math.max(0, files.findIndex(file => file.path === selectedPath)) + 1));
+      } else if (tab === "files" && key === "K") {
+        selectFile(Math.max(0, files.findIndex(file => file.path === selectedPath) - 1));
+      } else if (tab === "files" && key === "x") {
+        toggleExcludedFiles();
+      } else if (tab === "files" && key === "h") {
+        if (selectedPath) openFileHistory(selectedPath);
+      } else if (key === "x") {
+        if (liveState && !mergeMutation && !closeMutation) requestFromShortcut(requestClose);
+      } else if (tab === "files" && key === "c") {
+        rangeOpen = true;
+      } else if (tab === "conversation" && key === "c") {
+        if (!prefs.newestCommentsFirst) showTimelineThrough(timeline.length - 1);
+        focusTarget("#composer-input");
+      } else if (tab === "conversation" && key === "v" && canReview) {
+        focusTarget("#verdict-control");
+      } else if (key === "r") {
+        revealReply();
+      } else if (key === "e") {
+        openInlineEditor();
+      } else if (key === "E") {
+        openExternalEditor();
+      } else if (key === "m") {
+        if (mergeGate.action === "merge" && !mergeMutation) requestFromShortcut(() => requestMerge());
+        else if (mergeGate.reason) mergeFlash.show(mergeGate.reason);
+      } else if (key === "M") {
+        requestFromShortcut(requestForceMergeShortcut);
+      } else if (key === "u" && liveState) {
+        // mergeStateStatus reports BLOCKED over BEHIND, so an out-of-date branch can't be detected reliably.
+        if (!updateMutation && await confirmShortcut("Update the PR branch?", `Merge ${pr.baseRefName} into ${pr.headRefName} on GitHub. This pushes a shared commit and can trigger CI.`)) submitUpdateBranch();
+      } else if (key === "s") {
+        pickerMode = "assign";
+        pickerShortcutScope = organizationEnabled ? shortcutScope() : null;
+      } else if (key === "q") {
+        pickerMode = "review";
+        pickerShortcutScope = organizationEnabled ? shortcutScope() : null;
+      } else if (key === "l") {
+        openLabelPicker();
+        pickerShortcutScope = organizationEnabled ? shortcutScope() : null;
+      } else if (key === "o") {
+        const url = tab === "actions" ? actionsRunUrl : pr?.url;
+        if (url) window.open(url, "_blank", "noopener");
+      } else if (key === "t" && pr?.localCheckoutPath && !onLocalBranch) {
+        if (!localBranchBusy && await confirmShortcut("Switch the local branch?", `Change your local checkout to ${pr.headRefName}. This changes files on disk; it does not publish to GitHub.`)) switchToLocalBranch();
+      } else if (key === "p") {
+        promptOpen = true;
+      } else if (quickActions.some((a) => a.keybind === key)) {
+        if (await confirmShortcut("Run this PR action?", "This repository action changes GitHub labels or publishes a comment visible to other people.")) runQuickAction(quickActions.find((a) => a.keybind === key));
+      } else if (autofixDef?.keybind === key && fixShortcutTarget) {
+        if (fixShortcutTarget === "ci") requestFromShortcut(requestCiFix);
+        else if (fixShortcutTarget === "conflict") requestFromShortcut(requestConflictResolution);
+        else requestFromShortcut(requestAutofix);
+      } else if (keybindAgents.some((a) => a.keybind === key)) {
+        const def = keybindAgents.find((a) => a.keybind === key);
+        if (def.id === "fixer") {
+          if (!autoMergeMutation) requestFromShortcut(requestAutoMerge);
+        } else if (def.id === "autofix") {
+          if (!autofixBusy && agent?.state !== "running" && !prIsGreen && !mergedState) requestFromShortcut(requestAutofix);
+        } else if (!customBusy && agent?.state !== "running") {
+          requestFromShortcut(() => requestCustomAgent(def));
+        }
+      } else {
+        return;
+      }
+  }
+
+  let footerCommands = $derived((tab === 'files' ? filesKeys : tab === 'agents' || tab === 'actions' ? tabKeys : conversationKeys).flatMap(item => {
+    if (item.key === 'J / K') return [{ key: 'K', label: 'previous file' }, { key: 'J', label: 'next file' }];
+    if (item.key.includes('⌘1')) return [{ key: 'd', label: 'files' }];
+    return [{ ...item, key: item.key === 'esc' ? 'Escape' : item.key.startsWith('⇧') ? item.key.slice(1).toUpperCase() : item.key }];
+  }).map(item => {
+    const pane = reviewState.panes?.find(p => p.id === reviewState.active);
+    return { ...item, ...reviewShortcutInfo(item.key, { blocked: Boolean(pickerMode || rangeOpen || historyOpen || telescopeOpen || quotaMergeModal || mergeMenuOpen || reviewMenuOpen || shortcutRequest || confirmAction || mergeConfirm || forceMergeConfirm), tab, file: selectedPath, index: files.findIndex(f => f.path === selectedPath), count: files.length, editable: fileEditable && !workspaceEnabled, desktop: Boolean(window.cockpitShell?.openEditor), viewedAllowed: canChangeViewed({ rangeKey, comparison: { head: pane?.rev ?? organizationComparison.head, base: pane?.base ?? organizationComparison.base }, pullRequest: pr, snapshot: githubViewed, state: viewedSnapshot.value }), reply: Boolean(firstUnresolved), live: liveState, mergeReason: mergeGate.action !== 'merge' ? mergeGate.reason || 'This PR cannot currently be merged.' : mergeMutation ? 'A merge is already queued.' : '', updateBusy: Boolean(updateMutation), head: pr?.headRefName, base: pr?.baseRefName }) };
+  }));
+
 </script>
 
 <div class="page">
   {#if error}
     <div class="load">{error}</div>
   {:else if pr}
-    <div class="detail-frame" class:conversation-tab={tab === "conversation"} class:files-tab={tab === "files"}>
+    <div class="detail-frame" class:code-first={organizationEnabled && tab === "files"} class:conversation-tab={tab === "conversation"} class:files-tab={tab === "files"}>
     <div class="detail" style="--tree-width: {treeWidth}px">
       <header class="pr-head">
         <div class="pr-head-top">
@@ -3422,23 +3677,44 @@
               {/if}
             </div>
             <div class="toolbar-left">
-              {#if files.length && diffState === "ready"}
+              {#if organizationEnabled}
+                <span class="viewed-sync" role="status">{viewedSnapshot.matches('loading') ? 'Reading GitHub Viewed…' : viewedSnapshot.matches('saving') ? 'Saving Viewed…' : viewedSnapshot.matches('error') ? 'Viewed sync failed' : viewedAligned ? `GitHub · ${githubViewed.account.login} · ${viewedFiles.size}/${githubViewed.files.length} viewed` : 'Viewed belongs to a different revision'}</span>
+                {#if viewedSnapshot.matches('error')}<span class="viewed-error" role="alert" title={viewedSnapshot.context.error}>{viewedSnapshot.context.error}</span>{/if}
+                <button class="toolbar-btn" disabled={viewedSnapshot.matches('saving') || viewedSnapshot.matches('loading')} onclick={() => viewedActor.send({ type: 'REFRESH' })}>Refresh Viewed</button>
+              {/if}
+              {#if !organizationEnabled && files.length && diffState === "ready"}
                 <button class="toolbar-btn shortcut-action" onclick={toggleExcludedFiles}>
                   {fileFilterLabels[fileFilter]} <Kbd keys="x" />
                 </button>
               {/if}
-              <button class="toolbar-btn" onclick={toggleDiffLayout}>{prefs.diffLayout === "split" ? "unified" : "side by side"}</button>
+              {#if organizationEnabled}
+                <div class="diff-layout-options" aria-label="Diff layout"><button class="toolbar-btn" aria-pressed={reviewState.layout === 'unified'} onclick={() => workspaceEnabled ? workspace?.updatePane(reviewState.active, { layout: 'unified' }) : navigateReview({ layout: 'unified' })}>Unified</button><button class="toolbar-btn" aria-pressed={reviewState.layout === 'split'} onclick={() => workspaceEnabled ? workspace?.updatePane(reviewState.active, { layout: 'split' }) : navigateReview({ layout: 'split' })}>Split</button></div>
+                <button class="toolbar-btn" onclick={() => openBeside(selectedPath ?? files[0]?.path)} disabled={!files.length}>Open beside</button>
+                {#if workspaceEnabled}<a class="toolbar-btn" href={`https://github.com/${repo}/pull/${number}`} target="_blank" rel="noopener noreferrer">GitHub PR</a><button class="toolbar-btn" onclick={() => workspace?.addView("files")}>Files pane</button><button class="toolbar-btn" onclick={() => workspace?.addView("related")}>Related pane</button><button class="toolbar-btn" onclick={() => workspace?.resetLayout()}>Reset layout</button><button class="toolbar-btn" onclick={() => navigateReview({ panes: undefined, active: undefined })}>Single view</button>{/if}
+              {:else}<button class="toolbar-btn" onclick={toggleDiffLayout}>{prefs.diffLayout === "split" ? "unified" : "side by side"}</button>{/if}
             </div>
           </div>
+          {#snippet sidebarContents()}
+            {#if organizationEnabled && diffState === "ready" && comparisonFiles.length}
+              <ReviewOrganization bind:this={organizationPanel} comparison={organizationComparison} nativeFiles={comparisonFiles} {selectedPath} onChange={receiveOrganization} onSelect={path => { openChangedFile(path); reviewSidebar?.dismiss(); }} onOpenBeside={path => { openBeside(path); reviewSidebar?.dismiss(); }} docking={workspaceEnabled} fileHref={path => buildReviewHash(repo, number, { ...reviewState, file: path, view: "diff", line: null, rev: organizationComparison.head, base: organizationComparison.base })} restoredControls={reviewState.controls} onControlsChange={(controls, mode) => navigateReview({ controls }, mode)} />
+            {:else}
+              <FileTree files={treeFiles} {selectedPath} hoveredPath={hoveredDiffPath} onSelect={selectFileByPath} onContextMenu={prefs.reviewFileMenuEnabled ? openFileMenu : null} />
+            {/if}
+          {/snippet}
+          {#if organizationEnabled}
+            <ReviewSidebar bind:this={reviewSidebar} modalOpen={Boolean(pickerMode || rangeOpen || historyOpen || telescopeOpen || shortcutRequest || confirmAction || mergeConfirm || forceMergeConfirm || promptOpen)} count={diffState === "ready" ? treeFiles.length : pr.changedFiles} onSearch={() => telescope?.activate('files')}>{@render sidebarContents()}</ReviewSidebar>
+          {:else}
           <aside class="tree-pane">
             <div class="file-nav-head">
               <span>Changed files</span>
               {#if pr.changedFiles > 0}<span class="fcount">{diffState === "ready" ? treeFiles.length : pr.changedFiles}</span>{/if}
             </div>
-            <FileTree files={treeFiles} {selectedPath} hoveredPath={hoveredDiffPath} onSelect={selectFileByPath} onContextMenu={prefs.reviewFileMenuEnabled ? openFileMenu : null} />
+            {@render sidebarContents()}
           </aside>
+          {/if}
           <div class="tree-resizer" role="separator" aria-orientation="vertical" onpointerdown={startTreeResize}></div>
           <div class="diff-pane">
+            {#if organizationEnabled && !workspaceEnabled && reviewState.view === 'diff' && reviewState.file && diffState === 'ready' && !comparisonFiles.some(file => file.path === reviewState.file)}<div class="diff-status" role="alert">The requested file has no diff in this comparison: {reviewState.file}. Select another file or open its source.</div>{/if}
             {#if churnBaseRef && rangeKey === "since" && diffState === "ready"}
               <div class="churn-note">Merged in <span class="mono">{churnBaseRef}</span> since your visit — its churn is hidden, showing only this PR's changes</div>
             {/if}
@@ -3449,22 +3725,29 @@
               </div>
             {:else if diffState === "building"}
               <div class="diff-status">Preparing diff…</div>
-            {:else if files.length === 0}
-              <div class="diff-status">No changes in this range.</div>
+            {:else if files.length === 0 && !workspaceEnabled}
+              <div class="diff-status">{organizationEnabled && comparisonFiles.length ? "No visible files match. Use Show all or clear the file search." : "No changes in this range."}</div>
             {:else}
+              {#if workspaceEnabled}
+                <ReviewWorkspace bind:this={workspace} availableFiles={comparisonFiles.map(file => file.path)} identity={`${repo}#${number}`} locations={reviewState.panes} active={reviewState.active} onChange={workspaceChanged} content={workspacePane} />
+              {:else}
               <DiffView
                 bind:this={diffView}
                 {files}
+                {number}
+                enhancedReview={organizationEnabled}
+                viewedDisabled={organizationEnabled && (!viewedSnapshot.matches("ready") || !viewedAligned || rangeKey !== "all")}
                 onWarmFile={warmDiffFile}
                 onReleaseFile={releaseDiffFile}
                 onReadFile={(path) => diffDocument?.read(path)}
                 anchored={threadSplit.anchored}
                 {threadProps}
-                collapsed={collapsedFiles}
+                collapsed={organizationCollapsed}
                 onToggleFile={toggleFileCollapse}
                 {repo}
+                dismissedViewed={organizationEnabled && viewedAligned ? new Set(githubViewed.files.filter(file => file.state === "DISMISSED").map(file => file.path)) : new Set()}
                 viewed={viewedFiles}
-                onToggleViewed={(file) => setFileViewed(file, !viewedFiles.has(file.path))}
+                onToggleViewed={(file, options) => options?.viaShortcut ? toggleViewedFromShortcut(file) : setFileViewed(file, !viewedFiles.has(file.path))}
                 onHoverFile={(path) => (hoveredDiffPath = path)}
                 headSha={range?.head ?? pr.headRefOid}
                 diffIdentity={displayedDiffKey}
@@ -3483,13 +3766,14 @@
                 base={pr.baseRefName}
                 onOpenHistory={openFileHistory}
                 historyShortcutPath={files[fileIndex]?.path}
-                onLookupDefinition={(symbol, fromPath, position) => telescope?.openDefinition(symbol, fromPath, position)}
+                onLookupDefinition={organizationEnabled ? followDefinition : (symbol, fromPath, position) => telescope?.openDefinition(symbol, fromPath, position)}
                 editable={fileEditable}
                 onCommitFileEdit={commitFileEdit}
                 onGenerateCommitMessage={(path, hunk) => generateCommitMessage(repo, number, path, hunk)}
                 onFinishExternalEdit={finishExternalEdit}
-                layout={prefs.diffLayout}
+                layout={organizationEnabled ? reviewState.layout : prefs.diffLayout}
               />
+              {/if}
             {/if}
           </div>
         </div>
@@ -4307,7 +4591,7 @@
         title={pickerMode === "assign" ? "Assign" : pickerMode === "labels" ? "Labels" : "Reviewers"}
         users={pickerMode === "labels" ? repoLabels : repoUsers}
         current={pickerMode === "assign" ? assignedLogins : pickerMode === "labels" ? appliedLabels : requestedLogins}
-        onPick={pickerMode === "assign" ? submitAssign : pickerMode === "labels" ? submitLabel : submitRequestReviewer}
+        onPick={chooseShortcutPicker}
         onClose={() => (pickerMode = null)}
         loading={pickerMode === "labels" && repoLabelsState === "loading" ? "Loading labels…" : null}
         error={pickerMode === "labels" && repoLabelsState === "failed" ? "Couldn't load labels. Reopen to retry." : null}
@@ -4352,6 +4636,7 @@
     {#if mergeConfirm || forceMergeConfirm}
       <MergeDecisionDialog
         {number}
+        safe={organizationEnabled && shortcutDialogOrigin}
         headRef={pr.headRefName}
         baseRef={pr.baseRefName}
         methodLabel={mergeMethodLabel}
@@ -4361,10 +4646,17 @@
       />
     {/if}
 
+    {#if shortcutRequest}
+      <ConfirmDialog title={shortcutRequest.title} confirmLabel="Yes, continue" cancelLabel="No, cancel" focusCancel={true} detail={shortcutImpact} onConfirm={() => shortcutConfirmation.confirm(shortcutScope())} onCancel={() => shortcutConfirmation.cancel()} />
+      {#snippet shortcutImpact()}<p style="white-space:pre-wrap">{shortcutRequest.message}</p>{/snippet}
+    {/if}
+
     {#if confirmAction}
       <ConfirmDialog
         title={confirmAction.title}
-        confirmLabel={confirmAction.confirmLabel}
+        confirmLabel={organizationEnabled && shortcutDialogOrigin ? `Yes, ${confirmAction.confirmLabel ?? "continue"}` : confirmAction.confirmLabel}
+        cancelLabel={organizationEnabled && shortcutDialogOrigin ? "No, cancel" : "Cancel"}
+        focusCancel={organizationEnabled && shortcutDialogOrigin}
         danger={Boolean(confirmAction.danger)}
         detail={confirmAction.message ? confirmMessage : null}
         onConfirm={runConfirmAction}
@@ -4384,10 +4676,10 @@
     {:else if copied.value}
       <div class="keybar copied-flash">{copied.value}</div>
     {:else}
-      <KeyBar keys={tab === "files" ? filesKeys : tab === "agents" || tab === "actions" ? tabKeys : conversationKeys} />
+      <KeyBar keys={organizationEnabled ? footerCommands : tab === "files" ? filesKeys : tab === "agents" || tab === "actions" ? tabKeys : conversationKeys} onActivate={organizationEnabled ? item => runReviewShortcut(item.key) : null} />
     {/if}
 
-    <Telescope bind:this={telescope} {repo} headSha={pr.headRefOid} headRef={pr.headRefName} {fileFilter} changedFiles={files} onOpenChangedFile={openChangedFile} onOpenHistory={openFileHistory} bind:open={telescopeOpen} />
+    <Telescope bind:this={telescope} directCodeLinks={organizationEnabled} reviewLocation={organizationEnabled ? workspaceEnabled ? { ...reviewState, view: 'diff' } : reviewState : null} onReviewNavigate={organizationEnabled ? navigatePane : null} {repo} headSha={organizationEnabled ? searchRevision : pr.headRefOid} definitionContext={organizationEnabled ? definitionContext : null} headRef={pr.headRefName} fileFilter={organizationEnabled ? "all" : fileFilter} changedFiles={organizationEnabled ? workspaceEnabled && searchRevision !== organizationComparison.head ? [] : comparisonFiles : files} onOpenChangedFile={openChangedFile} onOpenHistory={openFileHistory} bind:open={telescopeOpen} />
     <FileHistory
       {repo}
       path={historyPath}
@@ -4463,7 +4755,106 @@
   </div>
 {/if}
 
+{#snippet workspacePane(pane)}
+  {@const paneFile = comparisonFiles.find(file => file.path === pane.file)}
+  <section class="workspace-pane" data-pane-id={pane.id} aria-label={pane.view === 'files' ? 'Changed files view' : pane.view === 'related' ? 'Related files view' : pane.file ?? 'Review pane'} onfocusin={() => workspace?.focusPane(pane.id)} onpointerdown={() => workspace?.focusPane(pane.id)}>
+    <div class="pane-toolbar">
+      {#if !['files', 'related'].includes(pane.view)}<button aria-pressed={pane.view === 'diff'} onclick={() => workspace?.updatePane(pane.id, { view: 'diff' })}>Diff</button><button aria-pressed={pane.view === 'source'} onclick={() => workspace?.updatePane(pane.id, { view: 'source' })}>Source</button>
+      <button aria-pressed={pane.layout === 'unified'} onclick={() => workspace?.updatePane(pane.id, { layout: 'unified' })}>Unified</button>
+      <button aria-pressed={pane.layout === 'split'} onclick={() => workspace?.updatePane(pane.id, { layout: 'split' })}>Split</button>
+      <button onclick={() => workspace?.openFile(pane.file, true)}>Open beside</button>{/if}
+      <details><summary>Move</summary><div class="pane-moves"><button onclick={() => workspace?.movePane(pane.id, 'left')}>Move left</button><button onclick={() => workspace?.movePane(pane.id, 'right')}>Move right</button><button onclick={() => workspace?.movePane(pane.id, 'top')}>Move above</button><button onclick={() => workspace?.movePane(pane.id, 'bottom')}>Move below</button><button onclick={() => workspace?.movePane(pane.id, 'center')}>Group as tab</button></div></details>
+      <button aria-label={`Close ${pane.view === 'files' ? 'files view' : pane.view === 'related' ? 'related view' : pane.file ?? 'pane'}`} onclick={() => workspace?.closePane(pane.id)}>×</button>
+    </div>
+    <div class="workspace-scroll">
+      {#if pane.view === 'source'}
+        <WorkspaceSource {repo} {pane} headRef={pr.headRefName} onNavigate={patch => workspace?.updatePane(pane.id, patch)} onDefinition={(symbol, path, position) => followDefinition(symbol, path, position, pane)} />
+      {:else if pane.view === 'files'}
+        <p class="workspace-help">Drag a file or tab to an edge to split; drop in the center to group.</p>
+        {#each comparisonFiles as candidate}<button class="workspace-file-link" draggable="false" onpointerdown={event => beginReviewFileDrag(event, { file: candidate.path, rev: organizationComparison.head, base: organizationComparison.base, view: 'diff' })} onclick={() => workspace?.openFile(candidate.path, false, { rev: organizationComparison.head, base: organizationComparison.base, side: 'right' })}>{candidate.path}</button>{/each}
+      {:else if pane.view === 'related'}
+        {@const selected = organization?.entries.find(entry => entry.file.filename === (pane.file ?? reviewState.file))}
+        {@const candidates = selected && organization?.graph ? relatedCandidates(selected.file, organization.entries.map(entry => entry.file), organization.graph) : []}
+        <p class="workspace-help">Related to {pane.file ?? reviewState.file ?? 'the selected file'}. Changed-path reference evidence.</p>
+        {#each candidates as candidate}<button class="workspace-file-link" onclick={() => workspace?.openFile(candidate.file.filename, false, { rev: organizationComparison.head, base: organizationComparison.base, side: 'right' })}>{candidate.file.filename}<small>{candidate.reason}</small></button>{:else}<p>No changed-file references available for this file.</p>{/each}
+      {:else}
+        <WorkspaceDiff {repo} {number} {pane} comparison={organizationComparison} currentFile={paneFile} currentResources={{ identity: displayedDiffKey, warm: warmDiffFile, release: releaseDiffFile, read: path => diffDocument?.read(path) }}>
+          {#snippet content(paneFile, resources)}
+              {#key `${resources.identity}:${paneFile.path}`}
+              <DiffView
+                files={[paneFile]}
+                {number}
+                enhancedReview={organizationEnabled}
+                showPrLink={false}
+                viewedDisabled={!viewedSnapshot.matches("ready") || !viewedAligned || (pane.rev && pane.rev !== pr.headRefOid) || (pane.base && pane.base !== pr.baseRefOid)}
+                onWarmFile={resources.warm}
+                onReleaseFile={resources.release}
+                onReadFile={resources.read}
+                anchored={threadSplit.anchored}
+                {threadProps}
+                collapsed={organizationCollapsed}
+                onToggleFile={toggleFileCollapse}
+                {repo}
+                dismissedViewed={organizationEnabled && viewedAligned ? new Set(githubViewed.files.filter(file => file.state === "DISMISSED").map(file => file.path)) : new Set()}
+                viewed={viewedFiles}
+                onToggleViewed={(file, options) => options?.viaShortcut ? toggleViewedFromShortcut(file, { head: pane.rev ?? organizationComparison.head, base: pane.base ?? organizationComparison.base }) : setFileViewed(file, !viewedFiles.has(file.path), { head: pane.rev ?? organizationComparison.head, base: pane.base ?? organizationComparison.base })}
+                onHoverFile={(path) => (hoveredDiffPath = path)}
+                headSha={pane.rev ?? organizationComparison.head}
+                diffIdentity={resources.identity}
+                {pendingInline}
+                {pendingReview}
+                {pendingReviewMutations}
+                pendingReviewsEnabled={prefs.pendingReviewsEnabled}
+                {pendingReviewStale}
+                commentable={commentable && (!pane.rev || pane.rev === pr.headRefOid) && (!pane.base || pane.base === pr.baseRefOid)}
+                onInlineComment={submitInlineComment}
+                onStageInlineComment={stageInlineComment}
+                onEditPendingComment={editPendingComment}
+                onDeletePendingComment={deletePendingComment}
+                onRetryMutation={handleRetry}
+                onDiscardMutation={handleDiscard}
+                base={pr.baseRefName}
+                onOpenHistory={openFileHistory}
+                historyShortcutPath={files[fileIndex]?.path}
+                onLookupDefinition={(symbol, path, position) => followDefinition(symbol, path, position, pane)}
+                editable={fileEditable && (!pane.rev || pane.rev === pr.headRefOid) && (!pane.base || pane.base === pr.baseRefOid)}
+                onCommitFileEdit={commitFileEdit}
+                onGenerateCommitMessage={(path, hunk) => generateCommitMessage(repo, number, path, hunk)}
+                onFinishExternalEdit={finishExternalEdit}
+                layout={pane.layout}
+              />
+              {/key}
+          {/snippet}
+        </WorkspaceDiff>
+      {/if}
+    </div>
+  </section>
+{/snippet}
+
 <style>
+  .code-first .pr-head { padding-top: 4px; padding-bottom: 4px; margin-bottom: 4px; }
+  .code-first .pr-title-copy { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 2px 12px; }
+  .code-first .pr-title-copy .ui-eyebrow { margin-bottom: 0; font-size: 10px; }
+  .code-first .pr-title-row h1 { margin-bottom: 0; }
+  .code-first .sub { grid-column: 1 / -1; }
+  .detail-frame.code-first.files-tab .tabs { margin-bottom: 6px; padding-block: 4px; }
+  @media (max-width: 700px) { .code-first .pr-title-copy { grid-template-columns: minmax(0, 1fr); } }
+  .code-first .pr-head h1 { font-size: 17px; line-height: 1.3; }
+  .code-first .pr-metrics, .code-first .pr-head-foot { display: none; }
+
+  .viewed-sync { font-size: 11px; color: var(--muted); }
+  .viewed-error { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--red); font-size: 11px; }
+  .workspace-help { font-size: 11px; color: var(--muted); padding: 8px; }
+  .workspace-file-link small { display: block; color: var(--muted); }
+  .workspace-file-link { display: block; text-align: left; font-size: 11px; margin: 6px; overflow-wrap: anywhere; }
+  .workspace-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  .workspace-scroll { overflow: auto; min-height: 0; flex: 1; padding: 4px; }
+  .pane-toolbar { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 6px; border-bottom: 1px solid var(--border); align-items: center; font-size: 11px; }
+  .pane-toolbar button { padding: 3px 6px; white-space: nowrap; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+  .pane-toolbar [aria-pressed="true"], .diff-layout-options [aria-pressed="true"] { background: var(--surface-hover, #263f58); color: var(--text); }
+  .pane-moves { position: absolute; z-index: 5; background: var(--surface, #20262e); padding: 8px; display: grid; }
+  .diff-layout-options { display: flex; gap: 2px; }
+
   .page {
     height: var(--general-height);
     overflow-y: auto;
@@ -7521,5 +7912,12 @@
   .file-context-menu button:disabled {
     color: var(--text-dim);
     cursor: default;
+  }
+
+  .files-layout:has(> :global(.review-sidebar[data-pinned='false'])) { grid-template-columns:48px 0 minmax(0, 1fr); }
+  .files-layout:has(> :global(.review-sidebar[data-pinned='false'])) > .tree-resizer { visibility:hidden; pointer-events:none; }
+  @media (max-width:940px) {
+    .files-layout:has(> :global(.review-sidebar[data-pinned='false'])) > .diff-pane { grid-column:3; grid-row:2; }
+    .files-layout:has(> :global(.review-sidebar[data-pinned='true'])) > .diff-pane { grid-column:1; grid-row:3; }
   }
 </style>
