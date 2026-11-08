@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { ensureShaLocal, findDefinition, grep, localFileHistoryPatch, parseGrepOutput, symbolMentionHistory } from "./repoSearch.ts";
+import { ensureShaLocal, findDefinition, findReferences, grep, localFileHistoryPatch, parseGrepOutput, symbolMentionHistory } from "./repoSearch.ts";
 import { lsTree, showFile } from "./gitShow.ts";
 
 const SHA = "a".repeat(40);
@@ -186,6 +186,51 @@ describe("grep / lsTree / showFile against a real repo", () => {
     const result = await findDefinition(root, sha, "Widget", "src/consumer.ts");
     expect(result.definition).toBeNull();
     expect(result.candidates.map((candidate) => candidate.path).sort()).toEqual(["src/app.ts", "src/other.ts"]);
+  });
+
+  test("semantic reference discovery follows renamed exports without reporting shadowed text matches", async () => {
+    const { root } = makeRepo();
+    writeFileSync(join(root, 'src/origin.ts'), 'export function paint() { return 1; }\n');
+    writeFileSync(join(root, 'src/barrel.ts'), 'export { paint as draw } from "./origin";\n');
+    writeFileSync(join(root, 'src/consumer.ts'), 'import { draw as render } from "./barrel";\nrender();\nfunction local(render: () => void) { render(); }\n');
+    writeFileSync(join(root, 'src/other.ts'), 'export function render() {}\nrender();\n');
+    git(root, ['add', '-A']); git(root, ['commit', '-q', '-m', 'aliased references']);
+    const sha = git(root, ['rev-parse', 'HEAD']).trim();
+    const result = await findReferences(root, sha, 'render', 'src/consumer.ts', { repo: 'owner/repo', position: { line: 2, character: 0 } });
+    expect(result.status).toBe('ok');
+    expect(result.references.some(r => r.path === 'src/origin.ts' && r.isDefinition)).toBe(true);
+    expect(result.references.some(r => r.path === 'src/consumer.ts' && r.line === 2)).toBe(true);
+    expect(result.references.some(r => r.path === 'src/consumer.ts' && r.line === 3)).toBe(false);
+    expect(result.references.some(r => r.path === 'src/other.ts')).toBe(false);
+    expect(result.coverage.limited).toBe(false);
+    const controller = new AbortController(); controller.abort();
+    await expect(findReferences(root, sha, 'render', 'src/consumer.ts', { repo: 'owner/repo', position: { line: 2, character: 0 } }, controller.signal)).rejects.toThrow();
+  });
+
+  test("small repository reference discovery includes independently named default imports", async () => {
+    const { root } = makeRepo();
+    writeFileSync(join(root, 'src/origin.ts'), 'export default function paint() {}\n');
+    writeFileSync(join(root, 'src/consumer.ts'), 'import render from "./origin";\nrender();\n');
+    writeFileSync(join(root, 'src/independent.ts'), 'import another from "./origin";\nanother();\n');
+    git(root, ['add', '-A']); git(root, ['commit', '-q', '-m', 'default import aliases']);
+    const sha = git(root, ['rev-parse', 'HEAD']).trim();
+    const result = await findReferences(root, sha, 'render', 'src/consumer.ts', { repo: 'owner/repo', position: { line: 2, character: 0 } });
+    expect(result.references.some(r => r.path === 'src/independent.ts' && r.line === 2)).toBe(true);
+    expect(result.coverage.limited).toBe(false);
+  });
+
+  test("reference discovery reports its file bound instead of implying complete results", async () => {
+    const { root } = makeRepo();
+    for (let i = 0; i < 302; i++) writeFileSync(join(root, `src/candidate${i}.ts`), 'export const sharedName = 1;\nsharedName;\n');
+    git(root, ['add', '-A']); git(root, ['commit', '-q', '-m', 'bounded candidate set']);
+    const sha = git(root, ['rev-parse', 'HEAD']).trim();
+    const result = await findReferences(root, sha, 'sharedName', 'src/candidate301.ts', { repo: 'owner/repo', position: { line: 2, character: 0 } });
+    expect(result.status).toBe('ok');
+    expect(result.coverage.files).toBeLessThanOrEqual(300);
+    expect(result.coverage.limited).toBe(true);
+    expect(result.coverage.reasons).toContain('source file limit');
+    expect(result.coverage.reasons.some(reason => reason.startsWith('candidate-only'))).toBe(true);
+    expect(result.references.every(r => r.path === 'src/candidate301.ts')).toBe(true);
   });
 
   test("findDefinition rejects non-identifiers", async () => {

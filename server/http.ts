@@ -172,7 +172,7 @@ import { spawn } from "node:child_process";
 import { repoUsersCached } from "./repoUsers.ts";
 import { matchesQuery, parseQuery, wantsHistoricalPrs } from "./query.ts";
 import { buildWebhookRoutes } from "./webhooks.ts";
-import { findDefinition, grep, localFileHistoryPatch, symbolMentionHistory, withSearchCtx } from "./repoSearch.ts";
+import { findDefinition, findReferences, grep, localFileHistoryPatch, symbolMentionHistory, withSearchCtx } from "./repoSearch.ts";
 import { lsTree, showFile } from "./gitShow.ts";
 import { QUICK_ACTIONS_PATH } from "../shared/quickActions.js";
 import { aggregateReviewScore, aggregateReviewStale, currentReviewerScores, reviewBots } from "./reviewScore.ts";
@@ -3291,6 +3291,22 @@ async function handleRepoDefinition(req: Request, url: URL): Promise<Response> {
 }
 
 
+async function handleRepoReferences(req: Request, url: URL): Promise<Response> {
+  const repo = url.searchParams.get("repo") ?? "";
+  const sha = url.searchParams.get("sha") ?? "";
+  const headRef = url.searchParams.get("headRef") ?? "";
+  const symbol = url.searchParams.get("symbol") ?? "";
+  const fromPath = url.searchParams.get("path") ?? "";
+  const line = Number(url.searchParams.get("line"));
+  const character = Number(url.searchParams.get("col"));
+  if (!REPO_RE.test(repo) || !FULL_SHA_RE.test(sha) || !REF_RE.test(headRef) || !/^[A-Za-z_$][A-Za-z0-9_$]{0,199}$/.test(symbol)
+    || !isRepoFilePath(fromPath) || !Number.isSafeInteger(line) || line <= 0 || !url.searchParams.has("col") || !Number.isSafeInteger(character) || character < 0) return json({ error: "invalid reference origin" }, 400);
+  return withSearchCtx(repo, headRef, sha, async ctx => {
+    if (ctx.status !== "ok") return json({ status: ctx.status });
+    return json(await findReferences(ctx.checkout, sha, symbol, fromPath, { repo, position: { line, character } }, req.signal));
+  });
+}
+
 async function handleRepoFiles(url: URL): Promise<Response> {
   const repo = url.searchParams.get("repo") ?? "";
   const sha = url.searchParams.get("sha") ?? "";
@@ -4310,6 +4326,7 @@ export function buildFetchHandler(port: number, dependencyOverrides: Partial<Htt
     if (req.method === "GET" && url.pathname === "/api/repo-definition") {
       return handleRepoDefinition(req, url);
     }
+    if (req.method === "GET" && url.pathname === "/api/repo-references") return handleRepoReferences(req, url);
     if (req.method === "GET" && url.pathname === "/api/repo-files") {
       return handleRepoFiles(url);
     }

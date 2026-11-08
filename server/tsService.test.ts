@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { definitionsAt, type ShaSource } from "./tsService.ts";
+import { definitionsAt, referencesAt, type ShaSource } from "./tsService.ts";
 
 let keySeq = 0;
 
@@ -116,5 +116,31 @@ describe("definitionsAt", () => {
       "src/app.ts": "export const width = 1;\n",
     });
     expect(definitionsAt(src, "src/app.ts", "height", 1, 13)).toBeNull();
+  });
+});
+
+describe("referencesAt", () => {
+  test("tracks aliases and renamed re-exports while excluding shadowed and unrelated names", () => {
+    const files = {
+      "src/origin.ts": "export function paint() { return 1; }\n",
+      "src/barrel.ts": 'export { paint as draw } from "./origin";\n',
+      "src/consumer.ts": 'import { draw as render } from "./barrel";\nrender();\nfunction local(render: () => void) { render(); }\n',
+      "src/other.ts": 'export function render() {}\nrender();\n',
+    };
+    const result = referencesAt(makeSource(files), "src/consumer.ts", "render", 2, 0, Object.keys(files));
+    expect(result?.references.some(r => r.path === 'src/origin.ts' && r.line === 1 && r.isDefinition)).toBe(true);
+    expect(result?.references.some(r => r.path === 'src/consumer.ts' && r.line === 2 && !r.isDefinition)).toBe(true);
+    expect(result?.references.some(r => r.path === 'src/barrel.ts')).toBe(true);
+    expect(result?.references.some(r => r.path === 'src/consumer.ts' && r.line === 3)).toBe(false);
+    expect(result?.references.some(r => r.path === 'src/other.ts')).toBe(false);
+    expect(result?.names).toEqual(expect.arrayContaining(['paint', 'draw', 'render']));
+  });
+
+  test("stale coordinates are unavailable and source identity isolates revisions", () => {
+    const a = makeSource({ 'src/a.ts': 'export const count = 1;\ncount;\n' });
+    const b = makeSource({ 'src/a.ts': 'export const count = 2;\n\ncount;\n' });
+    expect(referencesAt(a, 'src/a.ts', 'wrong', 2, 0, ['src/a.ts'])).toBeNull();
+    expect(referencesAt(a, 'src/a.ts', 'count', 2, 0, ['src/a.ts'])?.references.map(r => r.line)).toEqual([1, 2]);
+    expect(referencesAt(b, 'src/a.ts', 'count', 3, 0, ['src/a.ts'])?.references.map(r => r.line)).toEqual([1, 3]);
   });
 });

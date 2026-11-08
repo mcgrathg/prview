@@ -2,7 +2,7 @@
   import { createActor } from "xstate";
   import { createReviewConfirmation } from "./reviewConfirmation.js";
   import { reviewShortcutInfo } from "./reviewShortcutInfo.js";
-  import { normalizeReviewState, buildReviewHash } from "./reviewRoute.js";
+  import { normalizeReviewState, reviewReferenceDestination, buildReviewHash } from "./reviewRoute.js";
   import { beginReviewFileDrag, isReviewFileDragging } from "./reviewFileDrag.js";
   import { relatedCandidates } from "../../../shared/review-organization/relationships.ts";
   import { canChangeViewed } from "./reviewViewedGuard.js";
@@ -88,6 +88,8 @@
   import SplitButton from "./SplitButton.svelte";
   import DiffView from "./DiffView.svelte";
   import FileHistory from "./FileHistory.svelte";
+  import ReviewReferences from "./ReviewReferences.svelte";
+  import { referenceOrigin } from "./codeReference.js";
   import Telescope from "./Telescope.svelte";
   import ConflictEditor from "./ConflictEditor.svelte";
   import RangePicker from "./RangePicker.svelte";
@@ -152,7 +154,7 @@
     if (patch.file && patch.view === 'source') {
       const pane = workspaceEnabled ? reviewState.panes.find(p => p.id === reviewState.active) : null;
       const origin = pane ?? reviewState;
-      const rev = origin.side === 'left' ? origin.base ?? organizationComparison.base : origin.rev ?? organizationComparison.head;
+      const rev = patch.rev ?? (origin.side === 'left' ? origin.base ?? organizationComparison.base : origin.rev ?? organizationComparison.head);
       const location = { ...patch, rev, base: origin.base ?? organizationComparison.base, side: 'right' };
       if (workspaceEnabled) { workspace?.updatePane(reviewState.active, location); return; }
       navigateReview(location, mode);
@@ -178,6 +180,20 @@
     if (workspaceEnabled && pane) { workspace?.focusPane(pane.id); workspace?.updatePane(pane.id, { line: position?.line ?? null, side: position?.side ?? pane.side ?? 'right' }, 'replace'); await tick(); }
     else { navigateReview({ file: fromPath, line: position?.line ?? null, side: position?.side ?? 'right', view: 'diff' }, 'replace'); await tick(); }
     telescope?.openDefinition(symbol, fromPath, position);
+  }
+  async function followReferences(symbol, fromPath, position, pane = null) {
+    if (!position || !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(symbol)) return;
+    const origin = pane ?? searchOrigin;
+    const references = referenceOrigin(symbol, fromPath, position, origin, organizationComparison);
+    if (workspaceEnabled && pane) { workspace?.focusPane(pane.id); workspace?.updatePane(pane.id, { line: position.line, side: position.side ?? pane.side ?? 'right' }, 'replace'); await tick(); }
+    else { navigateReview({ file: fromPath, line: position.line, side: position.side ?? 'right', view: origin.view === 'source' ? 'source' : 'diff' }, 'replace'); await tick(); }
+    navigateReview({ references });
+  }
+  function openReference(entry) {
+    navigateReview(reviewReferenceDestination(reviewState, entry));
+  }
+  function referenceHref(entry) {
+    return buildReviewHash(repo, number, reviewReferenceDestination(reviewState, entry));
   }
   $effect(() => {
     if (!organizationEnabled || !pr || tab !== 'files') return;
@@ -3774,6 +3790,7 @@
                 base={pr.baseRefName}
                 onOpenHistory={openFileHistory}
                 historyShortcutPath={files[fileIndex]?.path}
+                onLookupReferences={organizationEnabled ? followReferences : null}
                 onLookupDefinition={organizationEnabled ? followDefinition : (symbol, fromPath, position) => telescope?.openDefinition(symbol, fromPath, position)}
                 editable={fileEditable}
                 onCommitFileEdit={commitFileEdit}
@@ -4687,7 +4704,8 @@
       <KeyBar keys={organizationEnabled ? footerCommands : tab === "files" ? filesKeys : tab === "agents" || tab === "actions" ? tabKeys : conversationKeys} onActivate={organizationEnabled ? item => runReviewShortcut(item.key) : null} />
     {/if}
 
-    <Telescope bind:this={telescope} directCodeLinks={organizationEnabled} reviewLocation={organizationEnabled ? workspaceEnabled ? { ...reviewState, view: 'diff' } : reviewState : null} onReviewNavigate={organizationEnabled ? navigatePane : null} {repo} headSha={organizationEnabled ? searchRevision : pr.headRefOid} definitionContext={organizationEnabled ? definitionContext : null} headRef={pr.headRefName} fileFilter={organizationEnabled ? "all" : fileFilter} changedFiles={organizationEnabled ? workspaceEnabled && searchRevision !== organizationComparison.head ? [] : comparisonFiles : files} onOpenChangedFile={openChangedFile} onOpenHistory={openFileHistory} bind:open={telescopeOpen} />
+    <Telescope bind:this={telescope} onLookupReferences={organizationEnabled ? followReferences : null} directCodeLinks={organizationEnabled} reviewLocation={organizationEnabled ? workspaceEnabled ? { ...reviewState, view: 'diff' } : reviewState : null} onReviewNavigate={organizationEnabled ? navigatePane : null} {repo} headSha={organizationEnabled ? searchRevision : pr.headRefOid} definitionContext={organizationEnabled ? definitionContext : null} headRef={pr.headRefName} fileFilter={organizationEnabled ? "all" : fileFilter} changedFiles={organizationEnabled ? workspaceEnabled && searchRevision !== organizationComparison.head ? [] : comparisonFiles : files} onOpenChangedFile={openChangedFile} onOpenHistory={openFileHistory} bind:open={telescopeOpen} />
+    {#if organizationEnabled && reviewState.references}<ReviewReferences {repo} headRef={pr.headRefName} origin={reviewState.references} onSelect={openReference} hrefFor={referenceHref} onClose={() => navigateReview({ references: undefined })} />{/if}
     <FileHistory
       {repo}
       path={historyPath}
@@ -4776,7 +4794,7 @@
     </div>
     <div class="workspace-scroll">
       {#if pane.view === 'source'}
-        <WorkspaceSource {repo} {pane} headRef={pr.headRefName} onNavigate={patch => workspace?.updatePane(pane.id, patch)} onDefinition={(symbol, path, position) => followDefinition(symbol, path, position, pane)} />
+        <WorkspaceSource {repo} {pane} headRef={pr.headRefName} onNavigate={patch => workspace?.updatePane(pane.id, patch)} onDefinition={(symbol, path, position) => followDefinition(symbol, path, position, pane)} onReferences={(symbol, path, position) => followReferences(symbol, path, position, pane)} onHistory={openFileHistory} />
       {:else if pane.view === 'files'}
         <p class="workspace-help">Drag a file or tab to an edge to split; drop in the center to group.</p>
         {#each comparisonFiles as candidate}<button class="workspace-file-link" draggable="false" onpointerdown={event => beginReviewFileDrag(event, { file: candidate.path, rev: organizationComparison.head, base: organizationComparison.base, view: 'diff' })} onclick={() => workspace?.openFile(candidate.path, false, { rev: organizationComparison.head, base: organizationComparison.base, side: 'right' })}>{candidate.path}</button>{/each}
@@ -4824,6 +4842,7 @@
                 base={pr.baseRefName}
                 onOpenHistory={openFileHistory}
                 historyShortcutPath={files[fileIndex]?.path}
+                onLookupReferences={(symbol, path, position) => followReferences(symbol, path, position, pane)}
                 onLookupDefinition={(symbol, path, position) => followDefinition(symbol, path, position, pane)}
                 editable={fileEditable && (!pane.rev || pane.rev === pr.headRefOid) && (!pane.base || pane.base === pr.baseRefOid)}
                 onCommitFileEdit={commitFileEdit}

@@ -1,6 +1,6 @@
 import { posix } from "node:path";
-import { astDefinitions } from "./astResolve.ts";
-import { showFile } from "./gitShow.ts";
+import { astDefinitions, astReferences } from "./astResolve.ts";
+import { lsTree, showFile } from "./gitShow.ts";
 import { fetchMirror, mirrorDir, withMirrorOperation } from "./mirror.ts";
 
 const MAX_MATCHES = 2000;
@@ -236,6 +236,47 @@ export async function findDefinition(
 
   if (candidates.length === 1) return { definition: candidates[0]!, candidates };
   return { definition: null, candidates };
+}
+
+export async function findReferences(checkout: string, sha: string, symbol: string, fromPath: string, query: DefinitionQuery, signal?: AbortSignal) {
+  const limits = { files: 300, names: 24, rounds: 6, results: 1000 };
+  const paths = new Set<string>([fromPath]);
+  const pending = new Set<string>([symbol]);
+  const searched = new Set<string>();
+  const reasons = new Set<string>();
+  let result: Awaited<ReturnType<typeof astReferences>> = null;
+  if (!IDENTIFIER_RE.test(symbol) || !/\.(?:[cm]?[jt]sx?|svelte)$/.test(fromPath)) return { status: "unavailable", references: [], coverage: { limited: false, files: 0, reasons: [] } };
+  signal?.throwIfAborted();
+  const codePaths = lsTree(checkout, query.repo, sha).filter(path => /\.(?:[cm]?[jt]sx?|svelte)$/.test(path));
+  if (codePaths.length <= limits.files) for (const path of codePaths) paths.add(path);
+  else reasons.add("candidate-only repository scan; independently named default imports may be absent");
+  for (let round = 0; round < limits.rounds; round++) {
+    for (const name of pending) {
+      if (searched.has(name)) continue;
+      if (searched.size >= limits.names) { reasons.add("alias discovery limit"); break; }
+      signal?.throwIfAborted();
+      searched.add(name);
+      const matches = await grep(checkout, sha, name, signal);
+      if (matches.length >= MAX_MATCHES) reasons.add("text candidate limit");
+      for (const match of matches) {
+        if (!/\.(?:[cm]?[jt]sx?|svelte)$/.test(match.path)) continue;
+        if (paths.size >= limits.files && !paths.has(match.path)) { reasons.add("source file limit"); continue; }
+        paths.add(match.path);
+      }
+    }
+    pending.clear();
+    signal?.throwIfAborted();
+    result = await astReferences({ checkout, repo: query.repo, sha, fromPath, symbol, ...query.position, candidatePaths: [...paths] }, signal);
+    signal?.throwIfAborted();
+    if (!result) break;
+    for (const name of result.names) if (!searched.has(name)) pending.add(name);
+    if (!pending.size || searched.size >= limits.names || paths.size >= limits.files) break;
+    if (round === limits.rounds - 1) reasons.add("alias expansion limit");
+  }
+  if (pending.size) reasons.add("remaining alias candidates");
+  if (result && result.references.length > limits.results) reasons.add("reference result limit");
+  return { status: result ? "ok" : "unavailable", references: result?.references.slice(0, limits.results) ?? [],
+    coverage: { limited: reasons.size > 0, files: paths.size, reasons: [...reasons] } };
 }
 
 export interface SymbolMentionCommit {

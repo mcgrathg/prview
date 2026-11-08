@@ -24,3 +24,16 @@ export function shouldFollowCodeLink(event, direct, hasSelection) {
     && !event.shiftKey && !event.altKey && !hasSelection
     && Boolean(direct || event.ctrlKey || event.metaKey);
 }
+
+export function codeLinkAction(event, direct, hasSelection) {
+  if (event.altKey && direct && !event.ctrlKey && !event.metaKey && !event.shiftKey
+    && !event.defaultPrevented && event.button === 0 && event.detail === 1 && !hasSelection) return 'references';
+  return shouldFollowCodeLink(event, direct, hasSelection) ? 'definition' : null;
+}
+
+export function referenceOrigin(symbol, path, position, origin, comparison) {
+  const side = position.side ?? origin.side ?? 'right';
+  return { symbol, path, line: position.line, character: position.character,
+    rev: side === 'left' ? origin.base ?? comparison.base : origin.rev ?? comparison.head,
+    base: origin.base ?? comparison.base };
+}

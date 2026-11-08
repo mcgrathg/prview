@@ -411,3 +411,54 @@ export function definitionsAt(
   }
   return out.length ? out : null;
 }
+
+export interface AstReference extends AstDefinition {
+  character: number;
+  length: number;
+  isDefinition: boolean;
+}
+export interface AstReferences {
+  references: AstReference[];
+  names: string[];
+}
+
+export function referencesAt(source: ShaSource, fromPath: string, symbol: string, line: number, character: number, candidatePaths: string[]): AstReferences | null {
+  const entry = entryFor(source);
+  const previousRoots = [...entry.roots];
+  entry.roots.clear();
+  for (const path of [fromPath, ...candidatePaths]) if (entry.pathSet.has(path)) entry.roots.add(toVirtual(path));
+  try {
+    const fileName = toVirtual(fromPath);
+    const sourceFile = entry.service.getProgram()?.getSourceFile(fileName);
+    if (!sourceFile) return null;
+    let offset;
+    try { offset = ts.getPositionOfLineAndCharacter(sourceFile, line - 1, character); } catch { return null; }
+    if (identifierAt(sourceFile.text, offset) !== symbol) return null;
+    const targets = [{ fileName, textSpan: { start: offset } }, ...(entry.service.getDefinitionAtPosition(fileName, offset) ?? [])];
+    const groups = targets.flatMap(target => entry.service.findReferences(target.fileName, target.textSpan.start) ?? []);
+    if (!groups.length) return null;
+    const program = entry.service.getProgram();
+    const found = new Map<string, AstReference>();
+    const names = new Set<string>([symbol]);
+    for (const group of groups) {
+      for (const ref of [ { ...group.definition, isDefinition: true }, ...group.references ]) {
+        const path = fromVirtual(ref.fileName);
+        const file = program?.getSourceFile(ref.fileName);
+        if (!entry.pathSet.has(path) || !file) continue;
+        const name = file.text.slice(ref.textSpan.start, ref.textSpan.start + ref.textSpan.length);
+        if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)) names.add(name);
+        const pos = ts.getLineAndCharacterOfPosition(file, ref.textSpan.start);
+        const key = `${path}:${ref.textSpan.start}`;
+        const previous = found.get(key);
+        found.set(key, { path, line: pos.line + 1, character: pos.character, length: ref.textSpan.length,
+          text: (file.text.split("\n")[pos.line] ?? "").trim(), symbol: name,
+          isDefinition: Boolean(ref.isDefinition || previous?.isDefinition),
+        });
+      }
+    }
+    return { references: [...found.values()].sort((a,b) => a.path.localeCompare(b.path) || a.line - b.line || a.character - b.character), names: [...names] };
+  } finally {
+    entry.roots.clear();
+    for (const path of previousRoots) entry.roots.add(path);
+  }
+}

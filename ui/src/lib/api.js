@@ -431,6 +431,13 @@ export async function repoDefinition(repo, sha, headRef, path, symbol, position 
 }
 
 
+export async function repoReferences(repo, sha, headRef, path, symbol, position, signal) {
+  const params = new URLSearchParams({ repo, sha, headRef, path, symbol, line: String(position.line), col: String(position.character) });
+  const res = await fetch(`/api/repo-references?${params}`, { signal });
+  if (!res.ok) throw new Error(`repo-references ${res.status}`);
+  return res.json();
+}
+
 export async function repoFiles(repo, sha, headRef) {
   const p = new URLSearchParams({ repo, sha, headRef });
   const res = await fetch(`/api/repo-files?${p}`);

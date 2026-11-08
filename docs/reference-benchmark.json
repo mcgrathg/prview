@@ -1,0 +1,173 @@
+{
+  "request": {
+    "repo": "storybookjs/storybook",
+    "sha": "59c927082239afee5a702036c62c8b61c192c865",
+    "headRef": "kasper/csf-core-consumers",
+    "path": "code/core/src/core-server/utils/save-story/update-args-in-csf-file.ts",
+    "symbol": "isValidIdentifier",
+    "line": 13,
+    "col": 9
+  },
+  "warmElapsedMs": [
+    854.27,
+    174.92,
+    168.44
+  ],
+  "result": {
+    "status": "ok",
+    "references": [
+      {
+        "path": "code/core/src/core-server/utils/save-story/save-story.ts",
+        "line": 23,
+        "character": 9,
+        "length": 17,
+        "text": "import { isValidIdentifier } from '../../../csf-tools/estree/ast.ts';",
+        "symbol": "isValidIdentifier",
+        "isDefinition": true
+      },
+      {
+        "path": "code/core/src/core-server/utils/save-story/save-story.ts",
+        "line": 44,
+        "character": 19,
+        "length": 17,
+        "text": "if (name && !isValidIdentifier(name)) {",
+        "symbol": "isValidIdentifier",
+        "isDefinition": false
+      },
+      {
+        "path": "code/core/src/core-server/utils/save-story/update-args-in-csf-file.ts",
+        "line": 3,
+        "character": 9,
+        "length": 17,
+        "text": "import { isValidIdentifier } from '../../../csf-tools/estree/ast.ts';",
+        "symbol": "isValidIdentifier",
+        "isDefinition": true
+      },
+      {
+        "path": "code/core/src/core-server/utils/save-story/update-args-in-csf-file.ts",
+        "line": 13,
+        "character": 9,
+        "length": 17,
+        "text": "if (!isValidIdentifier(key, false)) {",
+        "symbol": "isValidIdentifier",
+        "isDefinition": false
+      },
+      {
+        "path": "code/core/src/csf-tools/ConfigObject.ts",
+        "line": 17,
+        "character": 2,
+        "length": 17,
+        "text": "isValidIdentifier,",
+        "symbol": "isValidIdentifier",
+        "isDefinition": true
+      },
+      {
+        "path": "code/core/src/csf-tools/ConfigObject.ts",
+        "line": 347,
+        "character": 10,
+        "length": 17,
+        "text": "if (isValidIdentifier(key) && !editor.scopes.program.bindings.has(key) && !names.has(key)) {",
+        "symbol": "isValidIdentifier",
+        "isDefinition": false
+      },
+      {
+        "path": "code/core/src/csf-tools/ConfigObject.ts",
+        "line": 352,
+        "character": 25,
+        "length": 17,
+        "text": "const exported = isValidIdentifier(key) ? key : printString(key, quote);",
+        "symbol": "isValidIdentifier",
+        "isDefinition": false
+      },
+      {
+        "path": "code/core/src/csf-tools/ConfigObject.ts",
+        "line": 434,
+        "character": 24,
+        "length": 17,
+        "text": "const printed = isValidIdentifier(name) ? name : printString(name, quote);",
+        "symbol": "isValidIdentifier",
+        "isDefinition": false
+      },
+      {
+        "path": "code/core/src/csf-tools/ConfigObject.ts",
+        "line": 445,
+        "character": 8,
+        "length": 17,
+        "text": "isValidIdentifier(name) &&",
+        "symbol": "isValidIdentifier",
+        "isDefinition": false
+      },
+      {
+        "path": "code/core/src/csf-tools/estree/ast.ts",
+        "line": 595,
+        "character": 13,
+        "length": 17,
+        "text": "export const isValidIdentifier = (name: string, reserved = true): boolean =>",
+        "symbol": "isValidIdentifier",
+        "isDefinition": true
+      },
+      {
+        "path": "code/core/src/csf-tools/estree/editor.ts",
+        "line": 14,
+        "character": 2,
+        "length": 17,
+        "text": "isValidIdentifier,",
+        "symbol": "isValidIdentifier",
+        "isDefinition": true
+      },
+      {
+        "path": "code/core/src/csf-tools/estree/editor.ts",
+        "line": 522,
+        "character": 2,
+        "length": 17,
+        "text": "isValidIdentifier(name, false) ? name : printString(name, quote);",
+        "symbol": "isValidIdentifier",
+        "isDefinition": false
+      },
+      {
+        "path": "code/core/src/csf-tools/estree/editor.ts",
+        "line": 525,
+        "character": 2,
+        "length": 17,
+        "text": "isValidIdentifier(key, false)",
+        "symbol": "isValidIdentifier",
+        "isDefinition": false
+      },
+      {
+        "path": "code/core/src/csf-tools/story-shape/resolve-arg-value.ts",
+        "line": 8,
+        "character": 2,
+        "length": 17,
+        "text": "isValidIdentifier,",
+        "symbol": "isValidIdentifier",
+        "isDefinition": true
+      },
+      {
+        "path": "code/core/src/csf-tools/story-shape/resolve-arg-value.ts",
+        "line": 176,
+        "character": 32,
+        "length": 17,
+        "text": ": name !== undefined && isValidIdentifier(name, false)",
+        "symbol": "isValidIdentifier",
+        "isDefinition": false
+      },
+      {
+        "path": "code/core/src/csf-tools/story-shape/resolve-arg-value.ts",
+        "line": 184,
+        "character": 12,
+        "length": 17,
+        "text": "key = isValidIdentifier(property.key, false) ? property.key : JSON.stringify(property.key);",
+        "symbol": "isValidIdentifier",
+        "isDefinition": false
+      }
+    ],
+    "coverage": {
+      "limited": true,
+      "files": 10,
+      "reasons": [
+        "candidate-only repository scan; independently named default imports may be absent"
+      ]
+    }
+  },
+  "conditions": "Existing full mirror; server/worker warmed by interactive browser checks; not cold-clone or rendered-ready timing."
+}

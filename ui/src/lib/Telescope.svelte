@@ -1,6 +1,7 @@
 <script>
   import { tick, untrack } from "svelte";
   import { createActor } from "xstate";
+  import { reviewLookupMachine } from "./reviewLookupMachine.js";
   import { reviewSearchMachine } from "./reviewSearch.js";
   import { history as browserHistory, goBack as browserBack, goForward as browserForward } from "./history.svelte.js";
   import { repoSearch, repoFiles, repoFile, repoDefinition } from "./api.js";
@@ -16,15 +17,17 @@
   import Kbd from "./Kbd.svelte";
   import FileFind from "./FileFind.svelte";
   import { matchRuns, positionRanges, queryRanges } from "./matchRuns.js";
-  import { shouldFollowCodeLink } from "./codeReference.js";
+  import CodeActionsMenu from "./CodeActionsMenu.svelte";
+  import { codeLinkAction } from "./codeReference.js";
   import { columnWithin, createDefinitionHover, tokenAtPoint, wordAtPoint } from "./wordAtPoint.js";
 
   // With `hotkeys` off, Cmd+P and Cmd+Shift+F only switch modes once open; the owner opens it through `activate`.
-  let { repo, headSha, headRef, context = "", fileFilter = "all", changedFiles = [], onOpenChangedFile, onOpenHistory = null, onBack = null, reviewLocation = null, onReviewNavigate = null, definitionContext = null, directCodeLinks = false, hotkeys = true, open = $bindable(false) } = $props();
+  let { repo, headSha, headRef, context = "", fileFilter = "all", changedFiles = [], onOpenChangedFile, onOpenHistory = null, onBack = null, reviewLocation = null, onReviewNavigate = null, definitionContext = null, directCodeLinks = false, onLookupReferences = null, hotkeys = true, open = $bindable(false) } = $props();
 
   const definitionHover = createDefinitionHover(() => view, () => directCodeLinks);
   $effect(() => () => definitionHover.destroy());
 
+  let codeMenu;
   let mode = $state("search");
   let query = $state("");
   let matches = $state([]);
@@ -164,13 +167,12 @@
 
   let mounted = true;
   let sourceGeneration = 0;
-  let definitionController = null;
+
   $effect(() => () => {
     mounted = false;
     sourceGeneration++;
     filesToken = null;
-    defToken = null;
-    definitionController?.abort();
+    definitionActor.send({ type: "CANCEL" });
   });
 
   let cacheSource = untrack(() => `${repo}\0${headSha}`);
@@ -179,8 +181,7 @@
     if (source === cacheSource) return;
     cacheSource = source;
     sourceGeneration++;
-    defToken = null;
-    definitionController?.abort();
+    definitionActor.send({ type: "CANCEL" });
     filesToken = null;
     generatedPaths = new Set();
     previews = new Map();
@@ -269,8 +270,7 @@
   }
 
   function close(publish = true) {
-    defToken = null;
-    definitionController?.abort();
+    definitionActor.send({ type: "CANCEL" });
     if (publish && onReviewNavigate) onReviewNavigate({ search: undefined }, "replace");
     open = false;
     fileOpen = false;
@@ -297,8 +297,7 @@
   $effect(() => {
     const nowOpen = open;
     if (wasOpen && !nowOpen) {
-      defToken = null;
-      definitionController?.abort();
+      definitionActor.send({ type: "CANCEL" });
       untrack(() => { previews = new Map([...previews].filter(([, entry]) => entry.status !== "loading")); });
     }
     wasOpen = nowOpen;
@@ -471,42 +470,32 @@
     if (prefs.fileFinderEnabled) openFile();
   }
 
-  let defToken;
-  async function lookupDefinition(symbol, fromPath, ensureOpen = false, position = null) {
-    definitionController?.abort();
-    const controller = new AbortController();
-    definitionController = controller;
-    const lookupContext = definitionContext;
-    const token = {};
-    defToken = token;
-    const sourceRepo = repo;
-    const sourceHead = headSha;
-    const sourceRef = headRef;
-    const generation = sourceGeneration;
-    const valid = () => mounted && definitionContext === lookupContext && defToken === token && !controller.signal.aborted && sourceGeneration === generation && repo === sourceRepo && headSha === sourceHead && (open || ensureOpen);
-    try {
-      const res = await repoDefinition(sourceRepo, sourceHead, sourceRef, fromPath, symbol, position, controller.signal);
-      if (!valid()) return;
-      if (res.status !== "ok") {
-        showFlash(res.status === "fetching" ? "repo still fetching…" : `definition lookup: ${res.status}`);
-        return;
-      }
-      if (res.definition) {
-        if (ensureOpen) open = true;
-        navigateTo({ path: res.definition.path, line: res.definition.line ?? null });
-      } else if (res.candidates?.length) {
-        if (ensureOpen) open = true;
+  const definitionActor = createActor(reviewLookupMachine, { input: {
+    lookup: ({ request, signal }) => repoDefinition(request.repo, request.sha, request.headRef, request.path, request.symbol, request.position, signal),
+    onResult: ({ result, error, request }) => {
+      if (!mounted || request.context !== definitionContext || request.generation !== sourceGeneration || request.repo !== repo || request.sha !== headSha) return;
+      if (error) { showFlash("definition lookup failed"); return; }
+      if (result.status !== "ok") { showFlash(result.status === "fetching" ? "repo still fetching…" : `definition lookup: ${result.status}`); return; }
+      if (result.definition) {
+        if (request.ensureOpen) open = true;
+        navigateTo({ path: result.definition.path, line: result.definition.line ?? null });
+      } else if (result.candidates?.length) {
+        if (request.ensureOpen) open = true;
         if (mode !== "defs") defsReturnMode = mode;
-        defCandidates = res.candidates;
-        defsSymbol = symbol;
+        defCandidates = result.candidates;
+        defsSymbol = request.symbol;
         mode = "defs";
         selected = 0;
-      } else {
-        showFlash(`no definition for ${symbol}`);
-      }
-    } catch {
-      if (valid()) showFlash("definition lookup failed");
-    }
+      } else showFlash(`no definition for ${request.symbol}`);
+    },
+  } }).start();
+  $effect(() => () => definitionActor.stop());
+  $effect(() => {
+    const context = definitionContext;
+    untrack(() => { if (definitionActor.getSnapshot().context.request?.context !== context) definitionActor.send({ type: "CANCEL" }); });
+  });
+  function lookupDefinition(symbol, fromPath, ensureOpen = false, position = null) {
+    definitionActor.send({ type: "LOAD", request: { symbol, path: fromPath, position, ensureOpen, repo, sha: headSha, headRef, context: definitionContext, generation: sourceGeneration } });
   }
 
   export function openDefinition(symbol, fromPath, position = null) {
@@ -525,16 +514,22 @@
 
   function onEditorClick(e) {
     if (!view || !e.target.closest(".pl-code")) return;
-    if (!shouldFollowCodeLink(e, directCodeLinks, window.getSelection()?.isCollapsed === false)) return;
+    const action = codeLinkAction(e, directCodeLinks, window.getSelection()?.isCollapsed === false);
+    if (!action || (action === "references" && !onLookupReferences)) return;
     const token = tokenAtPoint(e.clientX, e.clientY, directCodeLinks);
     if (!token) return;
     e.preventDefault();
     const position = editorPosition(token);
     if (position && reviewLocation?.view === "source" && reviewLocation.file === view.path) onReviewNavigate?.({ line: position.line }, "replace");
-    lookupDefinition(token.word, view.path, false, position);
+    if (action === "references") onLookupReferences(token.word, view.path, position);
+    else lookupDefinition(token.word, view.path, false, position);
   }
 
   function onEditorContext(e) {
+    if (view && directCodeLinks && e.target.closest('.pl-code')) {
+      const token = tokenAtPoint(e.clientX, e.clientY, true);
+      if (token) { codeMenu?.open(e, { symbol: token.word, path: view.path, position: editorPosition(token) }); return; }
+    }
     if (!view || !onOpenHistory) return;
     const word = wordAtPoint(e.clientX, e.clientY);
     if (!word) return;
@@ -554,7 +549,7 @@
 
   $effect(() => {
     function onKey(e) {
-      if (isPromptDialogOpen()) return;
+      if (isPromptDialogOpen() || e.target.closest?.("[data-code-overlay]")) return;
       const meta = e.metaKey || e.ctrlKey;
       const key = e.key.toLowerCase();
       if ((open || hotkeys) && meta && e.shiftKey && key === "f") {
@@ -690,7 +685,7 @@
           {#if view}{view.path}{#if view.line != null}:{view.line}{/if}{:else}no file{/if}
         </span>
         {#if !(fileOpen && findOpen)}
-          <span class="ts-hint">{directCodeLinks ? "Click a symbol or import → definition · drag to select" : "Ctrl/Cmd-click → definition"}{onOpenHistory ? " · right-click → mention history" : ""}</span>
+          <span class="ts-hint">{directCodeLinks ? "Click → definition · Alt-click → references · drag to select" : "Ctrl/Cmd-click → definition"}{directCodeLinks ? " · right-click → code actions" : onOpenHistory ? " · right-click → mention history" : ""}</span>
         {/if}
         {#if fileOpen}
           <FileFind bind:this={fileFind} bind:open={findOpen} root={editorEl} lines={preview?.status === "ready" ? preview.lines : []} revision={preview} />
@@ -729,6 +724,8 @@
     </div>
   </div>
 {/if}
+
+<CodeActionsMenu bind:this={codeMenu} onDefinition={(symbol, path, position) => lookupDefinition(symbol, path, false, position)} onReferences={onLookupReferences} onHistory={onOpenHistory ? (path, symbol) => { close(); onOpenHistory(path, symbol); } : null} />
 
 <style>
   .ts-root {

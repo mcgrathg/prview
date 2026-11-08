@@ -1,5 +1,5 @@
-import type { AstDefinition } from "./tsService.ts";
-import type { AstRequest } from "./tsWorker.ts";
+import type { AstDefinition, AstReferences } from "./tsService.ts";
+import type { AstRequest, AstResponse } from "./tsWorker.ts";
 
 // Client for the AST worker. Keeps the HTTP loop responsive: all sync
 // LanguageService and git-show work happens in the worker. Requests run one
@@ -11,12 +11,12 @@ const WORKER_TIMEOUT_MS = 20_000;
 
 interface Job {
   req: Omit<AstRequest, "id">;
-  resolve: (defs: AstDefinition[] | null) => void;
+  resolve: (result: AstResponse | null) => void;
 }
 
 interface Inflight {
   id: number;
-  resolve: (defs: AstDefinition[] | null) => void;
+  resolve: (result: AstResponse | null) => void;
   timer: Timer;
 }
 
@@ -28,10 +28,10 @@ const queue: Job[] = [];
 function ensureWorker(): Worker {
   if (worker) return worker;
   worker = new Worker(new URL("./tsWorker.ts", import.meta.url).href);
-  worker.onmessage = (event: MessageEvent<{ id: number; defs: AstDefinition[] | null }>) => {
+  worker.onmessage = (event: MessageEvent<AstResponse>) => {
     if (inflight?.id !== event.data.id) return;
     clearTimeout(inflight.timer);
-    inflight.resolve(event.data.defs);
+    inflight.resolve(event.data);
     inflight = null;
     dispatch();
   };
@@ -68,9 +68,9 @@ function dispatch(): void {
 
 // Aborting drops the job if it is still queued; a dispatched job runs to
 // completion (the worker is sync) bounded by the dispatch timeout.
-export function astDefinitions(req: Omit<AstRequest, "id">, signal?: AbortSignal): Promise<AstDefinition[] | null> {
+async function astLookup(req: Omit<AstRequest, "id">, signal?: AbortSignal): Promise<AstResponse | null> {
   if (signal?.aborted) return Promise.resolve(null);
-  const { promise, resolve } = Promise.withResolvers<AstDefinition[] | null>();
+  const { promise, resolve } = Promise.withResolvers<AstResponse | null>();
   const job: Job = { req, resolve };
   queue.push(job);
   signal?.addEventListener(
@@ -85,4 +85,11 @@ export function astDefinitions(req: Omit<AstRequest, "id">, signal?: AbortSignal
   );
   dispatch();
   return promise;
+}
+
+export async function astDefinitions(req: Omit<AstRequest, "id">, signal?: AbortSignal): Promise<AstDefinition[] | null> {
+  return (await astLookup(req, signal))?.defs ?? null;
+}
+export async function astReferences(req: Omit<AstRequest, "id">, signal?: AbortSignal): Promise<AstReferences | null> {
+  return (await astLookup({ ...req, kind: "references" }, signal))?.references ?? null;
 }

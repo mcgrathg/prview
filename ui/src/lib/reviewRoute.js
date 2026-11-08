@@ -32,6 +32,17 @@ function position(value = {}) {
   return { file, line: file ? positiveInteger(input.line) : null, side: input.side === 'left' ? 'left' : 'right', view: input.view === 'source' ? 'source' : 'diff', rev: revision(input.rev), base: revision(input.base), layout: input.layout === 'unified' ? 'unified' : 'split' };
 }
 
+export function normalizeReferenceOrigin(value) {
+  if (!record(value)) return undefined;
+  const path = relativePath(value.path);
+  const symbol = typeof value.symbol === 'string' && /^[A-Za-z_$][A-Za-z0-9_$]{0,199}$/.test(value.symbol) ? value.symbol : null;
+  const line = positiveInteger(value.line);
+  const character = Number.isSafeInteger(value.character) && value.character >= 0 ? value.character : null;
+  const rev = revision(value.rev);
+  if (!path || !symbol || !line || character === null || !rev) return undefined;
+  return { path, symbol, line, character, rev, base: revision(value.base) };
+}
+
 /** Full organization controls; explicit rules:{} preserves Show all across reloads. */
 export function normalizeReviewControls(value = {}) {
   const input = record(value) ? value : {};
@@ -48,6 +59,8 @@ export function normalizeReviewControls(value = {}) {
 export function normalizeReviewState(value = {}) {
   const input = record(value) ? value : {};
   const result = position(input);
+  const references = normalizeReferenceOrigin(input.references);
+  if (references) result.references = references;
   if (record(input.controls)) result.controls = normalizeReviewControls(input.controls);
   if (Array.isArray(input.panes)) {
     const ids = new Set();
@@ -70,6 +83,15 @@ export function normalizeReviewState(value = {}) {
   if (record(input.search) && ['files', 'search'].includes(input.search.mode)) result.search = { mode: input.search.mode, query: text(input.search.query, 1024) };
   return result;
 }
+export function reviewReferenceDestination(review, entry) {
+  const state = normalizeReviewState(review);
+  if (!state.references) return state;
+  const location = { file: entry.path, line: entry.line, side: 'right', view: 'source', rev: state.references.rev, base: state.references.base };
+  const codePanes = state.panes?.filter(pane => !['files', 'related'].includes(pane.view));
+  const pane = codePanes?.find(pane => pane.id === state.active) ?? codePanes?.[0];
+  return normalizeReviewState({ ...state, ...location, ...(pane ? { panes: state.panes.map(candidate => candidate.id === pane.id ? { ...candidate, ...location } : candidate), active: pane.id } : {}) });
+}
+
 function jsonParam(params, key) {
   const value = params.get(key);
   if (!value || value.length > MAX_JSON_LENGTH) return undefined;
@@ -97,7 +119,7 @@ export function parseReviewRoute(hash) {
   if (actionJobText !== null && (!/^\d+$/.test(actionJobText) || !Number.isSafeInteger(Number(actionJobText)))) return null;
   const review = normalizeReviewState({
     file: params.get('file'), line: params.get('line'), side: params.get('side'), view: params.get('view'), rev: params.get('rev'), base: params.get('base'), layout: params.get('layout'),
-    controls: jsonParam(params, 'controls'), panes: jsonParam(params, 'panes'), active: params.get('active'), search: jsonParam(params, 'search'),
+    references: jsonParam(params, 'references'), controls: jsonParam(params, 'controls'), panes: jsonParam(params, 'panes'), active: params.get('active'), search: jsonParam(params, 'search'),
   });
   return { name: 'detail', repo: `${match[1]}/${match[2]}`, number, tab, actionSha, actionJob: actionJobText === null ? null : Number(actionJobText), historyPath, historySymbol, commentTarget: parseCommentTarget(params.get('comment')), review };
 }
@@ -112,6 +134,7 @@ export function buildReviewHash(repo, number, review = {}) {
   if (state.view !== 'diff') params.set('view', state.view);
   for (const key of ['rev', 'base']) if (state[key]) params.set(key, state[key]);
   if (state.layout !== 'split') params.set('layout', state.layout);
+  if (state.references) params.set('references', JSON.stringify(state.references));
   if (state.controls) params.set('controls', JSON.stringify(state.controls));
   if (state.panes) { params.set('panes', JSON.stringify(state.panes)); params.set('active', state.active); }
   if (state.search) params.set('search', JSON.stringify(state.search));

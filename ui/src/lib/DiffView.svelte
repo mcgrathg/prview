@@ -14,7 +14,8 @@
   import { normalizeFileEndings } from "./fileEndings.js";
   import { whenIdle } from "./preload.js";
   import { shouldToggleHoveredViewed } from "./dom.js";
-  import { shouldFollowCodeLink } from "./codeReference.js";
+  import CodeActionsMenu from "./CodeActionsMenu.svelte";
+  import { codeLinkAction } from "./codeReference.js";
   import { columnWithin, createDefinitionHover, tokenAtPoint } from "./wordAtPoint.js";
   import Chevron from "./Chevron.svelte";
   import Kbd from "./Kbd.svelte";
@@ -64,6 +65,7 @@
     base = null,
     onOpenHistory = null,
     onLookupDefinition = null,
+    onLookupReferences = null,
     historyShortcutPath = null,
     layout = "split",
   } = $props();
@@ -81,6 +83,7 @@
   const definitionHover = createDefinitionHover(() => onLookupDefinition, () => enhancedReview);
   $effect(() => () => definitionHover.destroy());
 
+  let codeMenu;
   let openKey = $state(null);
   let openCtx = $state(null);
   let draft = $state("");
@@ -154,13 +157,14 @@
 
   function onCodeClick(e, file) {
     if (!onLookupDefinition || !e.target.closest(".code") || e.target.closest("a, button, input, textarea, [contenteditable]")) return;
-    if (!shouldFollowCodeLink(e, enhancedReview, window.getSelection()?.isCollapsed === false)) return;
+    const action = codeLinkAction(e, enhancedReview, window.getSelection()?.isCollapsed === false);
+    if (!action || (action === "references" && !onLookupReferences)) return;
     const token = tokenAtPoint(e.clientX, e.clientY, enhancedReview);
     if (!token) return;
     const lineEl = token.node.parentElement?.closest(".line");
     if (!lineEl) return;
     e.preventDefault();
-    onLookupDefinition(token.word, file.path, linePosition(lineEl, token));
+    (action === "references" ? onLookupReferences : onLookupDefinition)(token.word, file.path, linePosition(lineEl, token));
   }
 
   function renderedFileBody(section) {
@@ -324,7 +328,13 @@
   }
 
   function onEditContextMenu(event, file) {
-    if (!editable || file.isBinary || file.isDeleted || fileEditor) return;
+    const token = enhancedReview && event.target.closest('.code') ? tokenAtPoint(event.clientX, event.clientY, true) : null;
+    const position = token && linePosition(token.node.parentElement?.closest('.line'), token);
+    const reference = token && position ? { symbol: token.word, path: file.path, position } : null;
+    if (!editable || file.isBinary || file.isDeleted || fileEditor) {
+      if (reference) codeMenu?.open(event, reference);
+      return;
+    }
     const hunkNode = event.target.closest("[data-hunk-index]");
     const hunkIndex = Number(hunkNode?.dataset.hunkIndex);
     const hunk = !file.isNew && Number.isInteger(hunkIndex) ? file.hunks[hunkIndex] : null;
@@ -355,6 +365,15 @@
       x: 0,
       y: 0,
     };
+    if (reference) {
+      const extras = [];
+      const run = action => () => { editMenu = menu; action(); };
+      if (menu.canEdit) extras.push({ label: 'Edit here', run: run(startContextEdit) });
+      if (menu.changeRow) extras.push({ label: 'Revert change', run: run(startContextRevertChange) });
+      if (menu.canRevertFile) extras.push({ label: 'Revert file', run: run(startContextRevertFile) });
+      codeMenu?.open(event, reference, extras);
+      return;
+    }
     event.preventDefault();
     editMenu = menu;
     positionEditMenu(++editMenuRequest, event.clientX, event.clientY);
@@ -1364,6 +1383,7 @@
   let observer;
   let prefetchObserver;
   let fileResizeObserver;
+  let viewportResizeObserver;
   let observerSetup = false;
   let observerRoot;
 
@@ -1587,14 +1607,21 @@
     rowObserver = new IntersectionObserver(updateHotRowChunks, { root: observerRoot, rootMargin: `${ROW_MARGIN * 100}% 0px` });
     rowResizeObserver = new ResizeObserver(measureRowChunks);
     fileResizeObserver = new ResizeObserver(measureFiles);
+    viewportResizeObserver = new ResizeObserver(() => { warmVisibleFiles(); warmVisibleRowChunks(); });
+    if (observerRoot) viewportResizeObserver.observe(observerRoot);
     for (const node of observedFiles.keys()) {
       observer.observe(node);
       prefetchObserver.observe(node);
       fileResizeObserver.observe(node);
     }
+    for (const node of observedRowChunks.keys()) {
+      rowObserver.observe(node);
+      rowResizeObserver.observe(node);
+    }
     observerRoot?.addEventListener("scroll", onDiffScroll, { passive: true });
     revealScrolledFiles();
     warmVisibleFiles();
+    warmVisibleRowChunks();
   }
   function nearViewport(node, path) {
     node.dataset.path = path;
@@ -1920,6 +1947,7 @@
     observer?.disconnect();
     prefetchObserver?.disconnect();
     fileResizeObserver?.disconnect();
+    viewportResizeObserver?.disconnect();
     rowObserver?.disconnect();
     rowResizeObserver?.disconnect();
     observerRoot?.removeEventListener("scroll", onDiffScroll);
@@ -2264,7 +2292,7 @@
   {@const displayed = split ? pairedRows(rows) : rows}
   {@const chunks = displayedChunks(file, displayed, split)}
   {#if chunks}
-    {#each chunks as chunk}
+    {#each chunks as chunk (chunk)}
       <div
         class="row-chunk"
         class:cold={!hotRowChunks.has(chunk)}
@@ -2487,7 +2515,7 @@
           onmousemove={(e) => definitionHover.onMouseMove(e, e.target.closest(".code"))}
           onmouseleave={definitionHover.onMouseLeave}
           onclick={(e) => onCodeClick(e, file)}
-          title={enhancedReview ? "Click a symbol or import path to follow it; drag to select code" : undefined}
+          title={enhancedReview ? "Click to follow; Alt-click for references; right-click for code actions; drag to select code" : undefined}
           oncontextmenu={(event) => onEditContextMenu(event, file)}
         >
           {@render diffRows(file, whole.rows, null)}
@@ -2499,7 +2527,7 @@
           onmousemove={(e) => definitionHover.onMouseMove(e, e.target.closest(".code"))}
           onmouseleave={definitionHover.onMouseLeave}
           onclick={(e) => onCodeClick(e, file)}
-          title={enhancedReview ? "Click a symbol or import path to follow it; drag to select code" : undefined}
+          title={enhancedReview ? "Click to follow; Alt-click for references; right-click for code actions; drag to select code" : undefined}
           oncontextmenu={(event) => onEditContextMenu(event, file)}
         >
           {#each file.hunks as hunk, hi}
@@ -2580,6 +2608,8 @@
     </div>
   {/if}
 </div>
+
+<CodeActionsMenu bind:this={codeMenu} onDefinition={onLookupDefinition} onReferences={onLookupReferences} onHistory={onOpenHistory} />
 
 <style>
   .viewed-dismissed, .file-edit-draft-status { color: var(--text-dim); font-size: 12px; }

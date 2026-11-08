@@ -1,3 +1,4 @@
+import { reviewReferenceDestination } from './reviewRoute.js';
 import { describe, expect, test } from 'bun:test';
 import { buildReviewHash, normalizeReviewState, parseReviewRoute } from './reviewRoute.js';
 
@@ -75,4 +76,24 @@ describe('shareable review snapshots', () => {
     expect(normalizeReviewState({ panes: [panes[0], panes[0], { id: 'bad', file: '/etc/file' }] }).panes).toHaveLength(1);
     for (const file of ['../a', '/a', 'C:/a', 'a\\b', 'a/../b', 'a\u0000b']) expect(normalizeReviewState({ file }).file).toBeNull();
   });
+});
+
+test('reference origins round-trip independently of the currently opened result', () => {
+  const references = { symbol: 'paint', path: 'src/caller.ts', line: 7, character: 3, rev: 'a'.repeat(40), base: 'b'.repeat(40) };
+  const hash = buildReviewHash('owner/repo', 42, { file: 'src/result.ts', line: 22, view: 'source', references });
+  expect(parseReviewRoute(hash)?.review.references).toEqual(references);
+  expect(parseReviewRoute(hash)?.review.file).toBe('src/result.ts');
+  expect(normalizeReviewState({ references: { ...references, path: '../secret' } }).references).toBeUndefined();
+  expect(normalizeReviewState({ references: { ...references, line: -1 } }).references).toBeUndefined();
+});
+
+test('reference anchors and ordinary clicks produce the same pinned destination in one code pane', () => {
+  const references = { symbol: 'paint', path: 'src/caller.ts', line: 7, character: 3, rev: 'a'.repeat(40), base: 'b'.repeat(40) };
+  const state = { references, panes: [{ id: 'p1', file: 'src/caller.ts', view: 'diff' }, { id: 'p2', file: 'src/kept.ts', view: 'diff' }, { id: 'p3', view: 'related' }], active: 'p1' };
+  const result = reviewReferenceDestination(state, { path: 'src/usage.ts', line: 42 });
+  expect(result.panes[0]).toMatchObject({ id: 'p1', file: 'src/usage.ts', line: 42, rev: 'a'.repeat(40), view: 'source' });
+  expect(result.panes[1].file).toBe('src/kept.ts');
+  expect(result.panes[2].view).toBe('related');
+  expect(parseReviewRoute(buildReviewHash('owner/repo', 42, result)).review).toEqual(result);
+  expect(reviewReferenceDestination({ ...state, active: 'p3' }, { path: 'src/usage.ts', line: 42 }).active).toBe('p1');
 });

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { codeReferenceAt, shouldFollowCodeLink } from "./codeReference.js";
+import { codeReferenceAt, shouldFollowCodeLink, codeLinkAction, referenceOrigin } from "./codeReference.js";
 
 test("code links identify symbols and complete import paths, including punctuation", () => {
   const line = "import { draw as render } from '../shape-tools.js';";
@@ -21,4 +21,21 @@ test("direct code clicks preserve selection, alternate clicks and legacy modifie
   for (const change of [{ shiftKey: true }, { altKey: true }, { button: 2 }, { detail: 2 }, { defaultPrevented: true }]) {
     expect(shouldFollowCodeLink({ ...click, ...change }, true, false)).toBe(false);
   }
+});
+
+test('Alt-click requests references only in enhanced mode while drag and alternate gestures stay inert', () => {
+  const event = { button: 0, detail: 1, altKey: true };
+  expect(codeLinkAction(event, true, false)).toBe('references');
+  expect(codeLinkAction(event, false, false)).toBeNull();
+  expect(codeLinkAction(event, true, true)).toBeNull();
+  expect(codeLinkAction({ ...event, shiftKey: true }, true, false)).toBeNull();
+  expect(codeLinkAction({ button: 0, detail: 1 }, true, false)).toBe('definition');
+});
+
+test('an explicit clicked side wins over the previously selected side when capturing references', () => {
+  const comparison = { head: 'head', base: 'base' };
+  const origin = { rev: 'head', base: 'base', side: 'left' };
+  expect(referenceOrigin('name', 'a.ts', { line: 3, character: 1, side: 'right' }, origin, comparison).rev).toBe('head');
+  expect(referenceOrigin('name', 'a.ts', { line: 3, character: 1, side: 'left' }, { ...origin, side: 'right' }, comparison).rev).toBe('base');
+  expect(referenceOrigin('name', 'a.ts', { line: 3, character: 1 }, origin, comparison).rev).toBe('base');
 });
