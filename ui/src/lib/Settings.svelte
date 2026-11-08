@@ -14,6 +14,7 @@
   import SettingsAnalytics from "./SettingsAnalytics.svelte";
   import SettingsNotifications from "./SettingsNotifications.svelte";
   import UpdateButton from "./UpdateButton.svelte";
+  import { CURRENT_RELEASE } from "./releases.js";
   import { notificationRuleIssues, serializeNotificationSettings } from "./notificationEditor.js";
   import { defaultNotificationSettings } from "../../../shared/notificationRules.ts";
   import { SETTINGS_SECTION_KEY, SETTINGS_SECTIONS, normalizeSettingsSection, settingsSectionHref } from "./settingsSections.js";
@@ -22,7 +23,7 @@
   import { PERSONAL_QUICK_ACTIONS_EXAMPLE, QUICK_ACTIONS_AGENT_PROMPT, QUICK_ACTIONS_EXAMPLE, QUICK_ACTIONS_PATH } from "./quickActions.js";
   import { tailscaleAccess } from "./tailscaleAccess.js";
   import { fetchQuotaApp, quotaAppSetupRequest, quotaAppStatus } from "./quotaAppStatus.svelte.js";
-  let { onRunSetup, section = "general" } = $props();
+  let { onRunSetup, onOpenChangelog = null, section = "general" } = $props();
 
 
   let grouping = $state(normalizePrGrouping(null));
@@ -591,6 +592,7 @@
       <div class="settings-head-copy">
         <h1 class="head-title">{activeSection?.label ?? "Workspace"}</h1>
       </div>
+      <div class="release-info"><span>prview v{CURRENT_RELEASE.version}</span>{#if onOpenChangelog}<button type="button" class="btn" onclick={onOpenChangelog}>What’s new</button>{/if}</div>
     </header>
 
     {#if error}
@@ -1313,6 +1315,8 @@
 {/if}
 
 <style>
+  .release-info { display:flex;align-items:center;gap:12px;font-size:12px;color:var(--text-dim); }
+  @media(max-width:520px) { .release-info { gap:7px; } }
   .group-editor-row { display: flex; gap: 8px; align-items: center; margin-block: 8px; }
   .group-editor-row .input { min-width: 0; flex: 1; }
   .group-editor > .btn { align-self: flex-start; }
@@ -1331,6 +1335,7 @@
   }
   .settings-analytics { max-width: var(--app-content-max-width, 1320px); }
   .head {
+    display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
     position: sticky;
     top: calc(-1 * var(--settings-page-inset));
     z-index: 4;

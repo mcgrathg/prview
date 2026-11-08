@@ -41,6 +41,8 @@ This repository is worked on by humans and coding agents alike. Leave it easier 
 
 ## Delivery
 
+- For a user-facing release batch, append the next numbered, dated entry to `ui/src/lib/releases.js` following [the changelog convention](docs/changelog.md). Release numbers describe shipped batches; internal commits and unfinished experiments keep the current number.
+
 - Deliver changes directly on `main`, not through pull requests. Commit only owned hunks with every imported new module; smoke boot-path changes from a tracked-source snapshot before pushing, because a shared checkout can hide missing release files.
 - New functionality is behaviorally inert and invisible until explicitly enabled, including no background work. Styling is opt-in unless it is minor polish that preserves the default appearance.
 - UI changes include before-and-after screenshots showing their effect in the app.

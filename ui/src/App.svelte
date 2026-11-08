@@ -10,6 +10,7 @@
   import QuickGenerate from "./lib/QuickGenerate.svelte";
   import AskView from "./lib/AskView.svelte";
   import Settings from "./lib/Settings.svelte";
+  import ReleaseNotes from "./lib/ReleaseNotes.svelte";
   import Usage from "./lib/Usage.svelte";
   import ActionsPage from "./lib/ActionsPage.svelte";
   import ActionsRunPage from "./lib/ActionsRunPage.svelte";
@@ -46,6 +47,7 @@
 
   const isShell = navigator.userAgent.includes("Electron");
   let appSidebar = $state(null);
+  let releaseNotes;
   const collapsibleNavigation = new URL(location.href).searchParams.get("organize") === "1";
 
   function parseRoute(hash) {
@@ -435,7 +437,7 @@
         {#if route.section === "usage"}
           <Usage />
         {:else}
-          <Settings section={route.section} onRunSetup={() => (setupOpen = true)} />
+          <Settings onOpenChangelog={() => releaseNotes?.showAll()} section={route.section} onRunSetup={() => (setupOpen = true)} />
         {/if}
       {:else if route.name === "actions"}
         <ActionsPage repos={route.repos} workflows={route.workflows} status={route.status} repoProvided={route.repoProvided} workflowProvided={route.workflowProvided} statusProvided={route.statusProvided} />
@@ -471,6 +473,8 @@
     <Lightbox />
   </div>
 {/if}
+
+<ReleaseNotes bind:this={releaseNotes} enabled={reposConfigured === true && !setupOpen && !currentSystemIssue} />
 
 {#if currentSystemIssue}
   <SystemIssueModal issue={currentSystemIssue} onRetry={retryCurrentSystemIssue} onClose={dismissSystemIssue} />
