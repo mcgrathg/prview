@@ -1,3 +1,4 @@
+import {investigationSnapshot} from './investigationState.js';
 import { expect,test } from 'bun:test';
 import { createInvestigationSession } from './investigationSession.js';
 import { shareInvestigation } from './investigationState.js';
@@ -42,4 +43,24 @@ test('PR sessions keep separate storage and teardown rejects an old PR lookup co
  resolve({status:'ok',definition:{path:'late-old.ts',line:9}});await new Promise(r=>setTimeout(r,0));
  expect(next.actor.getSnapshot().context.items).toHaveLength(0);expect(changes).toEqual([]);
  expect(JSON.parse(values.get('owner/old#1')).investigations[0].title).toBe('Old PR question');expect(JSON.parse(values.get('owner/new#2')).investigations).toEqual([]);next.dispose();
+});
+
+test('repository queries belong to their question and restore without background loading siblings',async()=>{
+ const f=fixture(),requests=[];const values=new Map(),storage={getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value)};
+ const options={key:'browser',storage,lookup:async({request})=>{requests.push(request);return {status:'ok',entries:[{path:'result.ts',line:3,text:request.query}]};},onLocation:()=>{}};
+ let session=createInvestigationSession(options);session.command({type:'OPEN',location:location('origin.ts')});const first=session.active().id;
+ session.send({type:'BROWSER.SET',immediate:true,patch:{kind:'text',query:'first',origin:location('origin.ts')}});await new Promise(r=>setTimeout(r,0));
+ session.send({type:'OPEN',location:location('elsewhere.ts')});expect(session.active().getSnapshot().context.browser.origin.file).toBe('origin.ts');
+ session.command({type:'OPEN',location:location('second.ts')});session.send({type:'BROWSER.SET',immediate:true,patch:{kind:'files',query:'second'}});await new Promise(r=>setTimeout(r,0));
+ session.command({type:'SELECT',id:first});expect(session.active().getSnapshot().children.research.getSnapshot().context.result.entries[0].text).toBe('first');expect(requests).toHaveLength(2);
+ const state=shareInvestigation(investigationSnapshot(session.active()));session.dispose();requests.length=0;
+ session=createInvestigationSession({...options,initial:state});await new Promise(r=>setTimeout(r,0));expect(requests).toHaveLength(1);expect(requests[0].query).toBe('first');expect(requests[0].path).toBe('origin.ts');
+ const serialized=shareInvestigation(investigationSnapshot(session.active()));expect(serialized.browser.kind).toBe('text');expect(serialized.browser.origin.file).toBe('origin.ts');session.dispose();
+});
+
+test('closing research aborts transport and late results cannot replace a newer question query',async()=>{
+ const requests=[],session=createInvestigationSession({key:'cancel',storage:{getItem:()=>null,setItem:()=>{}},lookup:({request,signal})=>new Promise(resolve=>requests.push({request,signal,resolve})),onLocation:()=>{}});
+ session.command({type:'OPEN',location:location('origin.ts')});session.send({type:'BROWSER.SET',immediate:true,patch:{kind:'text',query:'old'}});session.send({type:'BROWSER.SET',immediate:true,patch:{query:'new'}});expect(requests[0].signal.aborted).toBe(true);
+ requests[0].resolve({status:'ok',entries:[{path:'stale.ts'}]});requests[1].resolve({status:'ok',entries:[{path:'current.ts'}]});await new Promise(r=>setTimeout(r,0));expect(session.active().getSnapshot().children.research.getSnapshot().context.result.entries[0].path).toBe('current.ts');
+ session.send({type:'BROWSER.SET',immediate:true,patch:{query:'cancel'}});session.send({type:'BROWSER.CLOSE'});expect(requests[2].signal.aborted).toBe(true);expect(session.active().getSnapshot().context.browser.open).toBe(false);session.dispose();
 });

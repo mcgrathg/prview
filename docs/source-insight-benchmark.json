@@ -1,0 +1,20 @@
+{
+  "repo": "mcgrathg/prview",
+  "sha": "97cac0f9b695272b5b71c177beadf842eb371be8",
+  "path": "shared/review-organization/relationships.ts",
+  "conditions": "Three fresh production AST workers; existing full mirror and warm OS/disk caches. Worker startup, pinned Git reads and hover analysis included. No clone or repository code execution.",
+  "samples": [
+    {
+      "coldMs": 193.252375,
+      "warmMs": 44.85187499999998
+    },
+    {
+      "coldMs": 160.491833,
+      "warmMs": 38.34866699999998
+    },
+    {
+      "coldMs": 151.85374999999993,
+      "warmMs": 34.84129100000007
+    }
+  ]
+}

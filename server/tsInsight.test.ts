@@ -59,3 +59,9 @@ test('the advertised source size cap measures UTF-8 bytes',()=>{
   const text='/**'+ '漢'.repeat(200000)+'*/\nexport const value = 1;';expect(Buffer.byteLength(text)).toBeGreaterThan(512*1024);
   const result=insightAt(source({'unicode.ts':text}),{path:'unicode.ts',kind:'outline',line:1,character:0});expect(result.status).toBe('unavailable');expect(result.reason).toContain('512KiB');
 });
+
+test('implementation snippets are bounded and disclose shortening',()=>{
+  const files={'contract.ts':'export interface Handler {run(): string}', 'large.ts':"import type {Handler} from './contract';\nexport class Large implements Handler {run(): string {return '"+'x'.repeat(9000)+"';}}"};
+  const result=insightAt(source(files),{path:'contract.ts',kind:'implementation',symbol:'Handler',line:1,character:18,candidatePaths:Object.keys(files)});
+  expect(result.locations[0]?.text).toHaveLength(8000);expect(result.limited).toBe(true);
+});

@@ -1,4 +1,5 @@
 import { assign, setup, sendParent, sendTo, stopChild } from 'xstate';
+import {normalizeRepositoryBrowser,repositoryBrowserRequest} from './repositoryBrowserState.js';
 import { reviewLookupMachine } from './reviewLookupMachine.js';
 import { investigationSnapshot, normalizeInvestigation, restoreInvestigation, sourceLocation } from './investigationState.js';
 const changed = sendParent({ type: 'CHILD.CHANGED' });
@@ -8,15 +9,15 @@ function inspect(context, location) {
   return { preview: { location: target, origin: context.preview?.origin ?? context.location,
     trail: [...(context.preview?.trail ?? []), target].slice(-20) } };
 }
-export const investigationMachine = setup({ actors: { lookup: reviewLookupMachine } }).createMachine({
+export const investigationMachine = setup({ actors: { lookup: reviewLookupMachine, research:reviewLookupMachine },actions:{resumeResearch:({context,self})=>{const child=self.getSnapshot().children.research;if(!context.browser.open || !child)return;const snapshot=child.getSnapshot(),request=repositoryBrowserRequest(context.browser);if(snapshot.matches('idle') || JSON.stringify(snapshot.context.request)!==JSON.stringify(request))child.send({type:'LOAD',request});}} }).createMachine({
   id: 'investigation', initial: 'active',
   context: ({ input }) => ({ ...normalizeInvestigation(input.state), lookup: input.lookup, version: 0 }),
-  invoke: { id: 'lookup', src: 'lookup', input: ({ context }) => ({ lookup: context.lookup }),
+  invoke: [{id:'research',src:'research',input:({context})=>({lookup:context.lookup}),onSnapshot:{actions:[assign(({context})=>({version:context.version+1})),changed]}}, { id: 'lookup', src: 'lookup', input: ({ context }) => ({ lookup: context.lookup }),
     onSnapshot: { actions: [assign(({ context, event }) => {
       const snapshot = event.snapshot;
       const definition = snapshot.context.result?.definition;
       return { version: context.version + 1, ...(snapshot.matches('ready') && definition && snapshot.context.request?.kind === 'definition' ? inspect(context, { file: definition.path, line: definition.line, rev: snapshot.context.request.rev, base: snapshot.context.request.base }) : {}) };
-    }), changed] } },
+    }), changed] } }],
   states: { active: {} },
   on: {
     OPEN: { guard: ({ event }) => Boolean(sourceLocation(event.location)), actions: [sendTo('lookup', { type:'CANCEL' }), assign(({ context, event }) => {
@@ -33,10 +34,14 @@ export const investigationMachine = setup({ actors: { lookup: reviewLookupMachin
     'HISTORY.BACK': { guard: ({ context }) => context.cursor > 0, actions: [sendTo('lookup', { type:'CANCEL' }), assign(({ context }) => ({ cursor: context.cursor - 1, location: context.history[context.cursor - 1], preview: null })), changed] },
     'HISTORY.FORWARD': { guard: ({ context }) => context.cursor < context.history.length - 1, actions: [sendTo('lookup', { type:'CANCEL' }), assign(({ context }) => ({ cursor: context.cursor + 1, location: context.history[context.cursor + 1], preview: null })), changed] },
     TITLE: { actions: [assign(({ event }) => ({ title: String(event.title).slice(0,160) })), changed] },
-    SEARCH: { actions: [assign(({ event }) => ({ search: String(event.query).slice(0,1024) })), changed] },
+    SEARCH: {actions:[assign(({context,event})=>({search:String(event.query).slice(0,1024),browser:{...context.browser,query:String(event.query).slice(0,1024)}})),changed]},
+    'BROWSER.SET':{actions:[sendTo('lookup',{type:'CANCEL'}),assign(({context,event})=>{const browser=normalizeRepositoryBrowser({...context.browser,...event.patch,open:true},context.location,context.search,sourceLocation);return {browser,search:browser.query};}),sendTo('research',({context,event})=>({type:event.immediate ? 'LOAD' : 'QUERY',request:repositoryBrowserRequest(context.browser)})),changed]},
+    'BROWSER.FILTER':{actions:[assign(({context,event})=>({browser:normalizeRepositoryBrowser({...context.browser,filter:event.filter,scope:event.scope ?? context.browser.scope},context.location,context.search,sourceLocation)})),changed]},
+    'BROWSER.CLOSE':{actions:[sendTo('research',{type:'CANCEL'}),assign(({context})=>({browser:{...context.browser,open:false}})),changed]},
+    'BROWSER.RESUME':{actions:'resumeResearch'},
     LOOKUP: { actions: sendTo('lookup', ({ event }) => ({ type: 'LOAD', request: event.request })) },
     'LOOKUP.CANCEL': { actions: sendTo('lookup', { type: 'CANCEL' }) },
-    RESTORE: { guard: ({ event }) => Boolean(normalizeInvestigation(event.state)), actions: [sendTo('lookup', { type: 'CANCEL' }), assign(({ context, event }) => restoreInvestigation(context,event.state)), changed] },
+    RESTORE: { guard: ({ event }) => Boolean(normalizeInvestigation(event.state)), actions: [sendTo('lookup', { type: 'CANCEL' }),sendTo('research',{type:'CANCEL'}), assign(({ context, event }) => restoreInvestigation(context,event.state)), 'resumeResearch',changed] },
   },
 });
 export function workspaceSnapshot(actor) {

@@ -526,7 +526,9 @@ export function insightAt(source:ShaSource,request:{path:string;kind:InsightKind
       if(!entry.pathSet.has(path) || !target)continue;
       if(result.locations.length>=200){result.limited=true;break;}
       const position=ts.getLineAndCharacterOfPosition(target,definition.textSpan.start);
-      result.locations.push({path,line:position.line+1,text:(target.text.split('\n')[position.line] ?? '').trim(),symbol:identifierAt(target.text,definition.textSpan.start) ?? ''});
+      const text=(target.text.split('\n')[position.line] ?? '').trim(),name=identifierAt(target.text,definition.textSpan.start) ?? '';
+      if(text.length>8000 || name.length>200)result.limited=true;
+      result.locations.push({path,line:position.line+1,text:text.slice(0,8000),symbol:name.slice(0,200)});
     }
     return result;
   } finally {entry.roots.clear();for(const root of previousRoots)entry.roots.add(root);}

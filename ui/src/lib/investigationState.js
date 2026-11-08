@@ -1,3 +1,4 @@
+import {normalizeRepositoryBrowser} from './repositoryBrowserState.js';
 const record = value => value && typeof value === 'object' && !Array.isArray(value);
 const id = value => typeof value === 'string' && /^[a-z0-9_-]{1,64}$/i.test(value) ? value : null;
 const title = value => typeof value === 'string' ? value.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 160) : 'Investigation';
@@ -17,12 +18,14 @@ export function normalizeInvestigation(value) {
   history[cursor] = location;
   const previewLocation = sourceLocation(value.preview?.location);
   const preview = previewLocation ? { location: previewLocation, trail: trail(value.preview.trail), origin: sourceLocation(value.preview.origin) ?? location } : null;
+  const search=typeof value.search==='string' ? value.search.slice(0,1024) : '';
+  const browser=normalizeRepositoryBrowser(value.browser,history[cursor],search,sourceLocation);
   return { id: value.id, title: title(value.title) || 'Investigation', location: history[cursor], history, cursor, preview,
-    pinned: trail(value.pinned).slice(-2), search: typeof value.search === 'string' ? value.search.slice(0,1024) : '' };
+    pinned: trail(value.pinned).slice(-2), search, browser };
 }
 export function investigationSnapshot(actor) {
-  const { id, title, location, history, cursor, preview, pinned, search } = actor.getSnapshot().context;
-  return normalizeInvestigation({ id, title, location, history, cursor, preview, pinned, search });
+  const { id, title, location, history, cursor, preview, pinned, search, browser } = actor.getSnapshot().context;
+  return normalizeInvestigation({ id, title, location, history, cursor, preview, pinned, search, browser });
 }
 
 export function shareInvestigation(value) {

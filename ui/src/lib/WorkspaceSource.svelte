@@ -1,17 +1,19 @@
 <script>
-  import { tick } from 'svelte';
+  import { tick,untrack } from 'svelte';
   import { createActor, assign, fromPromise, setup } from 'xstate';
   import { langForPath } from './highlight.js';
   import { tokenizeCodeBlock } from './offThreadHighlight.js';
   import { theme } from './theme.svelte.js';
+  import ReadonlySource from './ReadonlySource.svelte';
   import {sourceEvidence} from './sourceEvidence.js';
   import SymbolCard from './SymbolCard.svelte';
   import { symbolRequest } from './symbolContext.js';
   import CodeActionsMenu from './CodeActionsMenu.svelte';
   import { codeLinkAction } from './codeReference.js';
   import { createDefinitionHover, tokenAtPoint, columnWithin } from './wordAtPoint.js';
-  let { repo, pane, headRef = '', onDefinition, onReferences, onHistory = null, onNavigate, onOpenSymbol = null } = $props();
+  let { repo, pane, headRef = '', onDefinition, onReferences, onHistory = null, onNavigate, onOpenSymbol = null, enhancedEditor = false, onSemantic = null, onCommand = null } = $props();
   let root;
+  let readonlySource=$state(null),showEditor=$state(true);
   let codeMenu;
   let symbolCard;
   const definitionHover = createDefinitionHover(() => onDefinition, () => true);
@@ -33,9 +35,11 @@
   let snapshot = $state(actor.getSnapshot());
   const subscription = actor.subscribe(next => snapshot = next);
   $effect(() => () => { subscription.unsubscribe(); actor.stop(); });
-  $effect(() => { actor.send({ type: 'LOAD', request: { repo, headRef, pane: { file: pane.file, rev: pane.rev, base: pane.base, side: pane.side } } }); });
+  const sourceKey=$derived(JSON.stringify([repo,headRef,pane.file,pane.rev,pane.base,pane.side]));
+  $effect(() => {sourceKey;untrack(()=>actor.send({type:'LOAD',request:{repo,headRef,pane:{file:pane.file,rev:pane.rev,base:pane.base,side:pane.side}}}));});
   let tokens = $state(null);
   $effect(() => {
+    if(enhancedEditor && showEditor){tokens=null;return;}
     const lines = snapshot.context.lines;
     const lang = langForPath(pane.file);
     const selectedTheme = theme.shiki;
@@ -53,7 +57,9 @@
       if (row && scroller) scroller.scrollTop += (row.getBoundingClientRect().top - scroller.getBoundingClientRect().top - scroller.clientHeight / 2) / (scroller.getBoundingClientRect().height / scroller.clientHeight || 1);
     });
   });
+  export function focus(){if(enhancedEditor && showEditor)readonlySource?.focus();else root?.focus();}
   export function captureEvidence() {
+    if(enhancedEditor && showEditor)return readonlySource?.captureEvidence() ?? null;
     if(!snapshot.matches('ready') || !snapshot.context.lines.length)return null;
     const selection=window.getSelection();
     const row=node=>(node?.nodeType===Node.ELEMENT_NODE ? node : node?.parentElement)?.closest('.source-row');
@@ -76,7 +82,7 @@
     return sourceEvidence({repo,file:pane.file,rev:pane.side==='left' ? pane.base : pane.rev,base:pane.base,lines:snapshot.context.lines,startLine,endLine,endAtLineStart});
   }
   function lookup(event) {
-    if (!event.target.closest(".source-code")) return;
+    if (event.target.closest(".monaco-editor") || !event.target.closest(".source-code")) return;
     if (event.detail > 1 || window.getSelection()?.isCollapsed === false) symbolCard?.close();
     const action = codeLinkAction(event, true, window.getSelection()?.isCollapsed === false);
     if (!action) return;
@@ -105,9 +111,12 @@
     if (token && character != null) codeMenu?.open(event, { symbol: token.word, path: pane.file, position: { line: Number(row.dataset.line), character } });
   }
 </script>
-<div class="source-file" bind:this={root} onclick={lookup} oncontextmenu={contextMenu} onmousemove={event => definitionHover.onMouseMove(event, event.target.closest(".source-code"))} onmouseleave={definitionHover.onMouseLeave} title="Click to inspect; Cmd/Ctrl-click to follow; Alt-click for references; right-click for code actions; drag to select code" role="region" aria-label={`Source ${pane.file}`}>
+<div tabindex="-1" class="source-file" class:editor-view={enhancedEditor && showEditor} bind:this={root} onclick={lookup} oncontextmenu={contextMenu} onmousemove={event => definitionHover.onMouseMove(event, event.target.closest(".source-code"))} onmouseleave={definitionHover.onMouseLeave} title="Click to inspect; Cmd/Ctrl-click to follow; Alt-click for references; right-click for code actions; drag to select code" role="region" aria-label={`Source ${pane.file}`}>
+  {#if enhancedEditor}<div class="source-tools" role="toolbar" aria-label="Source viewer"><button aria-pressed={showEditor} onclick={()=>showEditor=true}>Editor</button><button aria-pressed={!showEditor} onclick={()=>showEditor=false}>Text</button><button title="File symbols · ⌘⇧O" onclick={()=>onSemantic?.('outline','',pane.file,{line:1,character:0})}>Symbols</button><small>{(pane.side==='left' ? pane.base : pane.rev)?.slice(0,7)}</small></div>{/if}
   {#if snapshot.matches('loading')}<p role="status">Loading pinned source…</p>
   {:else if snapshot.matches('error')}<p role="alert">{snapshot.context.error} <button onclick={() => actor.send({ type: 'LOAD', request: { repo, headRef, pane } })}>Retry source</button></p>
+  {:else if enhancedEditor && showEditor}
+    <ReadonlySource bind:this={readonlySource} {repo} revision={pane.side==='left' ? pane.base : pane.rev} base={pane.base} {headRef} path={pane.file} content={snapshot.context.lines.join('\n')} line={pane.line} {onDefinition} {onReferences} {onSemantic} {onCommand} {onNavigate} onInspect={(event,target,keyboard)=>target ? inspectSymbol(event,target,keyboard) : symbolCard?.close()} onFallback={()=>showEditor=false} />
   {:else}
     {#each snapshot.context.lines as line, i}<div class="source-row" class:target={pane.line === i + 1} data-line={i + 1}><button class="line" aria-label={`Select line ${i + 1}`} onclick={() => onNavigate?.({ line: i + 1 })}>{i + 1}</button><span class="source-code">{#if tokens?.[i]}{#each tokens[i] as token}<span style:color={token.color}>{token.content}</span>{/each}{:else}{line}{/if}</span></div>{/each}
   {/if}
@@ -115,6 +124,10 @@
 <SymbolCard bind:this={symbolCard} context={JSON.stringify([repo,pane.file,pane.rev,pane.base,pane.side,pane.line])} onOpen={openSymbol} {onReferences} />
 <CodeActionsMenu bind:this={codeMenu} onInspect={inspectSymbol} {onDefinition} {onReferences} {onHistory} />
 <style>
+  .source-file.editor-view {min-width:0;height:100%;display:flex;flex-direction:column;}
+  .source-tools {position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:4px;padding:3px 6px;min-height:22px;background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0;font:10px system-ui;}
+  .source-tools button {padding:2px 5px;border:1px solid transparent;border-radius:4px;color:var(--text-dim);background:transparent;cursor:pointer;}.source-tools button[aria-pressed=true] {color:var(--text);border-color:var(--border);}.source-tools button:focus-visible {outline:2px solid var(--link);}.source-tools small {margin-left:auto;color:var(--text-dim);}
+
   .source-file { font: 11px/1.7 var(--font-mono, monospace); min-width: max-content; }
   .source-row { white-space: pre; display: flex; }
   .target { background: #9e6a0330; }

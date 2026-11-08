@@ -60,6 +60,17 @@ export const FEATURE_UPDATES = [
       { title: 'Stay private until you publish', body: 'Finding bodies stay in this browser and out of shared URLs. Draft preparation adds your explanation and pinned source links to the native editor without posting a comment.' },
     ],
   },
+  {
+    version: 1794175923594,
+    title: 'Investigate the whole repository',
+    summary: 'Each investigation now keeps a repository browser, search results and read-only source editor at its captured revision.',
+    howToTry: 'In the investigation preview (?organize=1&investigate=1), choose Repository or Search text. Click a result to inspect it, or choose Open/Beside. Right-click code for signatures, usages, types and implementations; Symbols lists the current file.',
+    changes: [
+      { title: 'Search beyond the PR', body: 'Browse unchanged files, group results by path, filter changed or other files, and restore each question’s query and origin through reload and browser history.' },
+      { title: 'Understand code in place', body: 'The lazy read-only editor adds signatures, documentation, file symbols, sticky scopes and local Find. Ordinary symbol clicks keep the contextual card. Analysis labels missing dependencies and partial results.' },
+      { title: 'Keep evidence precise', body: 'Selections save exact source ranges and immutable revisions to Findings. Native PR diffs, comments, Viewed and layout controls retain their existing behavior.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';

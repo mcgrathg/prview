@@ -438,9 +438,9 @@ export async function repoReferences(repo, sha, headRef, path, symbol, position,
   return res.json();
 }
 
-export async function repoFiles(repo, sha, headRef) {
+export async function repoFiles(repo, sha, headRef, signal) {
   const p = new URLSearchParams({ repo, sha, headRef });
-  const res = await fetch(`/api/repo-files?${p}`);
+  const res = await fetch(`/api/repo-files?${p}`, {signal});
   if (!res.ok) throw new Error(`repo-files ${res.status}`);
   return res.json();
 }
@@ -840,5 +840,12 @@ export async function uploadReviewAttachment(repo, number, capability, file, sig
 export async function reviewCommitContext(request, signal) {
   const response = await fetch(`/api/review-commit-context?${new URLSearchParams(request)}`, {signal});
   if (!response.ok) throw new Error(`Commit context request failed (${response.status}).`);
+  return response.json();
+}
+
+export async function repoInsight({repo,sha,headRef,path,kind,symbol='',line=1,character=0},signal) {
+  const params=new URLSearchParams({repo,sha,headRef,path,kind,symbol,line:String(line),col:String(character)});
+  const response=await fetch(`/api/repo-insight?${params}`,{signal});
+  if(!response.ok)throw new Error(`Source analysis request failed (${response.status}).`);
   return response.json();
 }
