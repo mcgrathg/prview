@@ -19,7 +19,7 @@
   function portal(node) { document.body.append(node); return {destroy() { node.remove(); }}; }
   export function close() { actor.send({type: 'CANCEL'}); }
   export async function inspect(event, target, keyboard = false) {
-    previousFocus = document.activeElement;
+    previousFocus = event.returnFocus ?? document.activeElement;
     x = Math.max(8, Math.min(event.clientX, innerWidth - 408));
     y = Math.max(8, Math.min(event.clientY + 12, innerHeight - 220));
     expanded = false; chosen = null;

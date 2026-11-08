@@ -4,6 +4,7 @@
   import { REVIEW_NAVIGATION_EVENT } from './reviewHistory.js';
   let { onDefinition, onReferences, onHistory = null, onInspect = null } = $props();
   let menu;
+  let returnFocus;
   const machine = setup({}).createMachine({ id: 'code-actions', initial: 'closed', context: { target: null, extras: [], x: 0, y: 0 },
     states: { closed: {}, open: {} },
     on: {
@@ -19,6 +20,7 @@
   function portal(node) { document.body.append(node); return { destroy() { node.remove(); } }; }
   export async function open(event, target, extras = []) {
     event.preventDefault();
+    returnFocus = document.activeElement;
     actor.send({ type: 'OPEN', target, extras, x: event.clientX, y: event.clientY });
     await tick();
     if (!menu || actor.getSnapshot().context.target !== target) return;
@@ -53,7 +55,7 @@
   {@const target = snapshot.context.target}
   <div use:portal bind:this={menu} class="code-actions" data-code-overlay role="menu" aria-label={`Code actions for ${target.symbol}`} style:left={`${snapshot.context.x}px`} style:top={`${snapshot.context.y}px`}>
     <strong>{target.symbol}</strong>
-    {#if onInspect}<button role="menuitem" onclick={() => { const event = {clientX:snapshot.context.x,clientY:snapshot.context.y}; run(value => onInspect(event,value,true)); }}>Inspect symbol</button>{/if}
+    {#if onInspect}<button role="menuitem" onclick={() => { const event = {clientX:snapshot.context.x,clientY:snapshot.context.y,returnFocus}; run(value => onInspect(event,value,true)); }}>Inspect symbol</button>{/if}
     <button role="menuitem" onclick={() => run(value => onDefinition?.(value.symbol, value.path, value.position))}>Open definition file</button>
     <button role="menuitem" disabled={!onReferences || !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(target.symbol)} onclick={() => run(value => onReferences(value.symbol, value.path, value.position))}>Find references <small>Alt-click</small></button>
     {#if onHistory}<button role="menuitem" onclick={() => run(value => onHistory(value.path, value.symbol))}>Mention history</button>{/if}
