@@ -41,7 +41,12 @@ export function normalizeReferenceOrigin(value) {
   const character = Number.isSafeInteger(value.character) && value.character >= 0 ? value.character : null;
   const rev = revision(value.rev);
   if (!path || !symbol || !line || character === null || !rev) return undefined;
-  return { path, symbol, line, character, rev, base: revision(value.base) };
+  const candidate = record(value.preview) ? value.preview : {};
+  const previewPath = relativePath(candidate.path);
+  const previewLine = positiveInteger(candidate.line);
+  const previewCharacter = Number.isSafeInteger(candidate.character) && candidate.character >= 0 ? candidate.character : null;
+  const preview = previewPath && previewLine && previewCharacter !== null ? { path: previewPath, line: previewLine, character: previewCharacter } : null;
+  return { path, symbol, line, character, rev, base: revision(value.base), ...(preview ? { preview } : {}) };
 }
 
 /** Full organization controls; explicit rules:{} preserves Show all across reloads. */
@@ -86,13 +91,32 @@ export function normalizeReviewState(value = {}) {
   if (record(input.search) && ['files', 'search'].includes(input.search.mode)) result.search = { mode: input.search.mode, query: text(input.search.query, 1024) };
   return result;
 }
-export function reviewReferenceDestination(review, entry) {
+export function referenceDiffLocation(origin, path, comparison = {}) {
+  const head = revision(comparison.head);
+  const base = revision(comparison.base);
+  if (!head || !base || !origin || ![head, base].includes(origin.rev)) return null;
+  const original = origin.rev === base && origin.rev !== head;
+  const file = (comparison.files ?? []).find(file => (original ? file.previousPath ?? file.path : file.path) === path);
+  return file ? { file: file.path, rev: head, base, side: original ? 'left' : 'right', view: 'diff' } : null;
+}
+export function reviewReferenceDestination(review, entry, comparison = {}) {
   const state = normalizeReviewState(review);
-  if (!state.references) return state;
-  const location = { file: entry.path, line: entry.line, side: 'right', view: 'source', rev: state.references.rev, base: state.references.base };
+  const path = relativePath(entry?.path);
+  const line = positiveInteger(entry?.line);
+  const character = Number.isSafeInteger(entry?.character) && entry.character >= 0 ? entry.character : 0;
+  if (!state.references || !path || !line) return state;
+  const change = referenceDiffLocation(state.references, path, comparison);
+  if (!change) {
+    const anchor = state.view === 'source' ? referenceDiffLocation({ rev: state.rev }, state.file, comparison) : null;
+    return normalizeReviewState({ ...state, ...(anchor ?? {}), search: undefined, references: { ...state.references, preview: { path, line, character } } });
+  }
+  const location = { ...change, line };
   const codePanes = state.panes?.filter(pane => !['files', 'related'].includes(pane.view));
   const pane = codePanes?.find(pane => pane.id === state.active) ?? codePanes?.[0];
-  return normalizeReviewState({ ...state, ...location, ...(pane ? { panes: state.panes.map(candidate => candidate.id === pane.id ? { ...candidate, ...location } : candidate), active: pane.id } : {}) });
+  return normalizeReviewState({
+    ...state, ...location, search: undefined, references: { ...state.references, preview: undefined },
+    ...(pane ? { panes: state.panes.map(candidate => candidate.id === pane.id ? { ...candidate, ...location } : candidate), active: pane.id } : {}),
+  });
 }
 
 function jsonParam(params, key) {

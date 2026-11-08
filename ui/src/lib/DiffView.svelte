@@ -691,6 +691,7 @@
   let wholeFile = $state(new Map());
   let gapRows = $state(new Map());
   let gapFiles = $state(new Map());
+  const gapLoads = new Map();
 
   const HEAD_H = 37;
   const FILE_MESSAGE_H = 45;
@@ -845,33 +846,59 @@
 
   export async function revealLocation(index, line = null, side = 'right', signal) {
     const file = files[index];
-    if (!file || signal?.aborted) return;
+    const requestIdentity = diffIdentity;
+    const current = () => !signal?.aborted && requestIdentity === diffIdentity && files[index]?.path === file?.path;
+    if (!file || !current()) return;
     revealFile(index);
     pendingPaths.delete(file.path);
     hotPaths.add(file.path);
     const loaded = await onWarmFile?.(file.path, true);
-    if (signal?.aborted) return;
+    if (!current()) return;
     if (loaded) hydratedFiles.set(file.path, loaded);
     const shown = loaded ?? hydratedFiles.get(file.path) ?? file;
+    if (collapsed.has(file.path)) {
+      onToggleFile(file);
+      await tick();
+      if (!current()) return;
+    }
     const split = usesSplitLayout(shown);
-    for (const hunk of shown.hunks) {
-      const rows = split ? pairedRows(hunk.rows) : hunk.rows;
-      const chunks = displayedChunks(shown, rows, split);
+    const numberKey = side === 'left' ? 'oldNum' : 'newNum';
+    let whole = wholeFile.get(file.path);
+    let rows = whole?.status === 'ready' ? [whole.rows] : shown.hunks.map(hunk => hunk.rows);
+    if (line && !rows.some(rows => rows.some(row => row[numberKey] === line)) && !shown.isDeleted && !shown.isBinary) {
+      const source = await loadGapFile(shown);
+      if (!current()) return;
+      if (source) {
+        whole = { status: 'ready', rows: buildWholeFile(shown, source.content) };
+        wholeFile = new Map(wholeFile).set(file.path, whole);
+        rows = [whole.rows];
+      }
+    }
+    for (const sourceRows of rows) {
+      const displayed = split ? pairedRows(sourceRows) : sourceRows;
+      const chunks = displayedChunks(shown, displayed, split);
       if (!chunks) continue;
       const wanted = chunks.find(chunk => chunk.rows.some(row => {
         const target = split ? row[side === 'left' ? 'left' : 'right'] : row;
-        return target?.[side === 'left' ? 'oldNum' : 'newNum'] === line;
+        return target?.[numberKey] === line;
       }));
       hotRowChunks.add(wanted ?? chunks[0]);
     }
     await tick();
-    if (signal?.aborted) return;
-    const section = document.getElementById(`diff-file-${index}`);
-    section?.scrollIntoView({ block: 'start' });
+    if (!current()) return;
+    const section = diffEl?.querySelector(`#diff-file-${index}`);
+    const scroller = diffEl?.closest('.workspace-scroll');
+    const scrollTo = (node, center = false) => {
+      if (!node) return;
+      if (!scroller) { node.scrollIntoView({ block: center ? 'center' : 'start' }); return; }
+      const rect = node.getBoundingClientRect();
+      scroller.scrollTop += (rect.top - scroller.getBoundingClientRect().top) / generalLayoutScale - (center ? (scroller.clientHeight - rect.height / generalLayoutScale) / 2 : 0);
+    };
+    scrollTo(section);
     await new Promise(resolve => requestAnimationFrame(resolve));
-    if (signal?.aborted) return;
+    if (!current()) return;
     const target = line && section?.querySelector(`[data-${side === 'left' ? 'old' : 'new'}-line="${line}"]`);
-    (target ?? section)?.scrollIntoView({ block: target ? 'center' : 'start' });
+    scrollTo(target ?? section, Boolean(target));
   }
 
   function firstSectionBelow(from, to, y) {
@@ -969,7 +996,14 @@
   async function loadGapFile(file) {
     const current = gapFiles.get(file.path);
     if (current?.status === "ready") return current;
-    if (current?.status === "loading") return null;
+    if (gapLoads.has(file.path)) return gapLoads.get(file.path);
+    const pending = fetchGapFile(file);
+    gapLoads.set(file.path, pending);
+    try { return await pending; }
+    finally { if (gapLoads.get(file.path) === pending) gapLoads.delete(file.path); }
+  }
+
+  async function fetchGapFile(file) {
     const loading = new Map(gapFiles);
     loading.set(file.path, { status: "loading" });
     gapFiles = loading;
@@ -1979,6 +2013,8 @@
     hydratedFiles.clear();
     gapRows = new Map();
     gapFiles = new Map();
+    gapLoads.clear();
+    wholeFile = new Map();
     void tick().then(async () => {
       await setupObserver();
       observedFileNodes.length = 0;

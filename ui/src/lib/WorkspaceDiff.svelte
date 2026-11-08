@@ -1,5 +1,4 @@
 <script>
-  import { untrack } from 'svelte';
   import { fetchPrDiff } from './api.js';
   import { loadDiffDocument } from './diffDocument.js';
   let { repo, number, pane, comparison, currentFile, currentResources, content } = $props();
@@ -35,22 +34,7 @@
   });
   let fileLocation = '';
   $effect(() => { const location = `${pane.file}:${resources.identity}`; if (location !== fileLocation) { fileLocation = location; const scroller = root?.closest('.workspace-scroll'); if (scroller) scroller.scrollTop = 0; } });
-  let revealed = '';
-  $effect(() => {
-    const key = `${resources.identity}:${pane.file}:${pane.line}:${pane.side}`;
-    if (!file || !pane.line || !root || key === revealed) return;
-    revealed = key;
-    let frames = 60;
-    let cancelled = false;
-    const reveal = () => {
-      if (cancelled) return;
-      const row = root.querySelector(`[data-${pane.side === 'left' ? 'old' : 'new'}-line="${pane.line}"]`);
-      if (row) { const scroller = root.closest('.workspace-scroll'); if (scroller) scroller.scrollTop += (row.getBoundingClientRect().top - scroller.getBoundingClientRect().top - scroller.clientHeight / 2) / (scroller.getBoundingClientRect().height / scroller.clientHeight || 1); }
-      else if (--frames > 0) requestAnimationFrame(reveal);
-    };
-    requestAnimationFrame(reveal);
-    return () => { cancelled = true; };
-  });
+
 </script>
 <div bind:this={root}>
   {#if error}<p role="alert">{error} <button onclick={() => retry++}>Retry comparison</button></p>

@@ -2,7 +2,7 @@
   import { createActor } from "xstate";
   import { createReviewConfirmation } from "./reviewConfirmation.js";
   import { reviewShortcutInfo } from "./reviewShortcutInfo.js";
-  import { normalizeReviewState, reviewReferenceDestination, buildReviewHash } from "./reviewRoute.js";
+  import { normalizeReviewState, referenceDiffLocation, reviewReferenceDestination, buildReviewHash } from "./reviewRoute.js";
   import { beginReviewFileDrag, isReviewFileDragging } from "./reviewFileDrag.js";
   import { relatedCandidates } from "../../../shared/review-organization/relationships.ts";
   import { canChangeViewed } from "./reviewViewedGuard.js";
@@ -144,6 +144,12 @@
   let searchRevision = $derived(searchOrigin.side === 'left' ? searchOrigin.base ?? organizationComparison.base : searchOrigin.rev ?? organizationComparison.head);
   let definitionContext = $derived(JSON.stringify([workspaceEnabled ? activeReviewPane?.id : 'single', searchOrigin.file, searchOrigin.view, searchOrigin.side, searchRevision]));
   let restoredLocation = '';
+  let paneDiffViews = $state.raw(new Map());
+  function bindPaneDiff(id, view) {
+    const next = new Map(paneDiffViews);
+    if (view) next.set(id, view); else next.delete(id);
+    paneDiffViews = next;
+  }
   function navigateReview(patch, mode = 'push') {
     if (!organizationEnabled || !pr) return;
     navigationActor.send({ type: 'PATCH', patch: { rev: range?.head ?? pr.headRefOid, base: range?.base ?? pr.baseRefOid, ...patch }, historyMode: mode });
@@ -212,10 +218,23 @@
     navigateReview({ references });
   }
   function openReference(entry) {
-    navigateReview(reviewReferenceDestination(reviewState, entry));
+    const destination = reviewReferenceDestination(reviewState, entry, { ...organizationComparison, files: comparisonFiles });
+    if (!destination.references?.preview) restoredLocation = '';
+    navigateReview(destination);
+  }
+  function openContextBeside(definition, request) {
+    if (!finishFileEdit()) return;
+    const target = { ...symbolDestination(definition, request), ...referenceDiffLocation({ rev: request.sha }, definition.path, { ...organizationComparison, files: comparisonFiles }) };
+    if (workspaceEnabled) workspace?.openFile(target.file, true, target);
+    else navigateReview({ panes: [{ id: 'p1', ...reviewState }, { id: 'p2', ...target, layout: reviewState.layout }], active: 'p2', ...target, rev: reviewState.rev, base: reviewState.base });
+  }
+  function followContextReferences(symbol, path, position) {
+    if (!position || !reviewState.references) return;
+    const references = referenceOrigin(symbol, path, position, { rev: reviewState.references.rev, base: reviewState.references.base }, organizationComparison);
+    navigateReview({ references });
   }
   function referenceHref(entry) {
-    return buildReviewHash(repo, number, reviewReferenceDestination(reviewState, entry));
+    return buildReviewHash(repo, number, reviewReferenceDestination(reviewState, entry, {...organizationComparison,files:comparisonFiles}));
   }
   $effect(() => {
     if (!organizationEnabled || !pr || tab !== 'files') return;
@@ -227,7 +246,14 @@
     });
   });
   async function applyReviewLocation(target, signal) {
-    if (!target.file || target.view !== 'diff' || target.panes?.length) return;
+    if (target.panes?.length) {
+      const pane = target.panes.find(pane => pane.id === target.active);
+      if (pane?.view !== 'diff') return;
+      await tick();
+      if (!signal.aborted) await paneDiffViews.get(pane.id)?.revealLocation(0, pane.line, pane.side, signal);
+      return;
+    }
+    if (!target.file || target.view !== 'diff') return;
     if (!files.some(f => f.path === target.file) && comparisonFiles.some(f => f.path === target.file)) await organizationPanel?.revealFile(target.file, false);
     await tick();
     if (signal.aborted) return;
@@ -240,7 +266,8 @@
   $effect(() => {
     if (!organizationEnabled || !pr || tab !== 'files' || diffState !== 'ready') return;
     const target = reviewState;
-    const key = JSON.stringify([repo, number, displayedDiffKey, target.file, target.line, target.side, target.view, target.layout, Boolean(target.panes)]);
+    const pane = target.panes?.find(pane => pane.id === target.active);
+    const key = JSON.stringify([repo, number, displayedDiffKey, target.file, target.line, target.side, target.view, target.layout, pane, Boolean(paneDiffViews.get(pane?.id))]);
     if (key === restoredLocation) return;
     restoredLocation = key;
     untrack(() => navigationActor.send({ type: 'APPLY' }));
@@ -4739,7 +4766,7 @@
     {/if}
 
     {#if !(investigationsEnabled && reviewState.investigation)}<Telescope bind:this={telescope} onOpenSymbol={openResolvedSymbol} onLookupReferences={organizationEnabled ? followReferences : null} directCodeLinks={organizationEnabled} reviewLocation={organizationEnabled ? workspaceEnabled ? { ...reviewState, view: 'diff' } : reviewState : null} onReviewNavigate={organizationEnabled ? navigatePane : null} {repo} headSha={organizationEnabled ? searchRevision : pr.headRefOid} definitionContext={organizationEnabled ? definitionContext : null} headRef={pr.headRefName} fileFilter={organizationEnabled ? "all" : fileFilter} changedFiles={organizationEnabled ? workspaceEnabled && searchRevision !== organizationComparison.head ? [] : comparisonFiles : files} onOpenChangedFile={openChangedFile} onOpenHistory={openFileHistory} bind:open={telescopeOpen} />{/if}
-    {#if organizationEnabled && reviewState.references}<ReviewReferences {repo} headRef={pr.headRefName} origin={reviewState.references} onSelect={openReference} hrefFor={referenceHref} onClose={() => navigateReview({ references: undefined })} />{/if}
+    {#if organizationEnabled && reviewState.references}<ReviewReferences {repo} comparison={{...organizationComparison,files:comparisonFiles}} headRef={pr.headRefName} origin={reviewState.references} onSelect={openReference} hrefFor={referenceHref} onOpenBeside={openContextBeside} onContextReferences={followContextReferences} onPreviewClose={()=>navigateReview({references:{...reviewState.references,preview:undefined}})} onClose={() => navigateReview({ references: undefined })} />{/if}
     <FileHistory
       {repo}
       path={historyPath}
@@ -4843,6 +4870,7 @@
           {#snippet content(paneFile, resources)}
               {#key `${resources.identity}:${paneFile.path}`}
               <DiffView
+                bind:this={() => paneDiffViews.get(pane.id), view => bindPaneDiff(pane.id, view)}
                 files={[paneFile]}
                 {number}
                 enhancedReview={organizationEnabled}

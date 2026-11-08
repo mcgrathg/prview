@@ -90,12 +90,13 @@ test('reference origins round-trip independently of the currently opened result'
 test('reference anchors and ordinary clicks produce the same pinned destination in one code pane', () => {
   const references = { symbol: 'paint', path: 'src/caller.ts', line: 7, character: 3, rev: 'a'.repeat(40), base: 'b'.repeat(40) };
   const state = { references, panes: [{ id: 'p1', file: 'src/caller.ts', view: 'diff' }, { id: 'p2', file: 'src/kept.ts', view: 'diff' }, { id: 'p3', view: 'related' }], active: 'p1' };
-  const result = reviewReferenceDestination(state, { path: 'src/usage.ts', line: 42 });
-  expect(result.panes[0]).toMatchObject({ id: 'p1', file: 'src/usage.ts', line: 42, rev: 'a'.repeat(40), view: 'source' });
+  const comparison={head:'a'.repeat(40),base:'b'.repeat(40),files:[{path:'src/usage.ts'}]};
+  const result = reviewReferenceDestination(state, { path: 'src/usage.ts', line: 42 },comparison);
+  expect(result.panes[0]).toMatchObject({ id: 'p1', file: 'src/usage.ts', line: 42, rev: 'a'.repeat(40), view: 'diff' });
   expect(result.panes[1].file).toBe('src/kept.ts');
   expect(result.panes[2].view).toBe('related');
   expect(parseReviewRoute(buildReviewHash('owner/repo', 42, result)).review).toEqual(result);
-  expect(reviewReferenceDestination({ ...state, active: 'p3' }, { path: 'src/usage.ts', line: 42 }).active).toBe('p1');
+  expect(reviewReferenceDestination({ ...state, active: 'p3' }, { path: 'src/usage.ts', line: 42 },comparison).active).toBe('p1');
 });
 
 
@@ -106,4 +107,39 @@ test('investigation URLs preserve the review anchor and the independent preview 
   expect(parsed?.review.investigation?.location.file).toBe('source.ts');
   expect(parsed?.review.investigation?.preview?.location.rev).toBe('b'.repeat(40));
   expect(normalizeReviewState({...review,investigation:{...review.investigation,location:{file:'../bad',rev:'a'.repeat(40)}}}).investigation).toBeUndefined();
+});
+
+test('reference clicks keep unchanged source in rail context without moving the PR or its panes',()=>{
+ const head='a'.repeat(40),base='b'.repeat(40),references={symbol:'paint',path:'src/change.ts',line:7,character:3,rev:head,base};
+ const state=normalizeReviewState({file:'src/change.ts',line:7,rev:head,base,references,panes:[{id:'main',file:'src/change.ts',view:'diff',rev:head,base},{id:'kept',file:'src/test.ts',view:'diff',rev:head,base}],active:'main'});
+ const result=reviewReferenceDestination(state,{path:'src/context.ts',line:19,character:4},{head,base,files:[{path:'src/change.ts'}]});
+ expect(result.file).toBe(state.file);expect(result.line).toBe(7);expect(result.view).toBe('diff');expect(result.panes).toEqual(state.panes);expect(result.references.preview).toEqual({path:'src/context.ts',line:19,character:4});expect(result.references.rev).toBe(head);
+ expect(parseReviewRoute(buildReviewHash('owner/repo',1,result)).review).toEqual(result);
+});
+test('original-side references open the renamed PR diff at original line numbers',()=>{
+ const head='a'.repeat(40),base='b'.repeat(40),references={symbol:'paint',path:'src/change.ts',line:7,character:3,rev:base,base};
+ const state=normalizeReviewState({file:'src/change.ts',view:'diff',rev:head,base,references,search:{mode:'files',query:'old'}});
+ const result=reviewReferenceDestination(state,{path:'src/old.ts',line:11},{head,base,files:[{path:'src/new.ts',previousPath:'src/old.ts'}]});
+ expect(result).toMatchObject({file:'src/new.ts',line:11,side:'left',view:'diff',rev:head,base});expect(result.search).toBeUndefined();expect(result.references.preview).toBeUndefined();expect(result.references.rev).toBe(base);
+});
+test('a reference from a different revision stays context even when its path changed in the displayed PR',()=>{
+ const head='a'.repeat(40),base='b'.repeat(40),old='c'.repeat(40),references={symbol:'paint',path:'src/change.ts',line:7,character:3,rev:old,base};
+ const state=normalizeReviewState({file:'src/change.ts',line:7,rev:head,base,references});const result=reviewReferenceDestination(state,{path:'src/change.ts',line:99},{head,base,files:[{path:'src/change.ts'}]});
+ expect(result.line).toBe(7);expect(result.references.preview.line).toBe(99);expect(result.references.rev).toBe(old);
+});
+test('unsafe preview locations cannot acquire authority through a restored references URL',()=>{
+ const references={symbol:'paint',path:'src/change.ts',line:7,character:3,rev:'a'.repeat(40),base:'b'.repeat(40)};
+ for(const preview of [{path:'../secret',line:2,character:0},{path:'src/good.ts',line:0,character:0},{path:'src/good.ts',line:2,character:-1}])expect(normalizeReviewState({references:{...references,preview}}).references.preview).toBeUndefined();
+});
+
+
+test('legacy source destinations return to the PR diff before showing external rail context', () => {
+  const head = 'a'.repeat(40), base = 'b'.repeat(40);
+  const references = { symbol: 'paint', path: 'src/change.ts', line: 7, character: 3, rev: head, base };
+  const result = reviewReferenceDestination({ file: 'src/change.ts', line: 7, view: 'source', rev: head, base, references }, { path: 'src/context.ts', line: 11 }, { head, base, files: [{ path: 'src/change.ts' }] });
+  expect(result).toMatchObject({ file: 'src/change.ts', line: 7, view: 'diff', rev: head, base });
+  expect(result.references.preview).toEqual({ path: 'src/context.ts', line: 11, character: 0 });
+  const changed = reviewReferenceDestination(result, { path: 'src/change.ts', line: 21 }, { head, base, files: [{ path: 'src/change.ts' }] });
+  expect(changed).toMatchObject({ file: 'src/change.ts', line: 21, view: 'diff' });
+  expect(changed.references.preview).toBeUndefined();
 });

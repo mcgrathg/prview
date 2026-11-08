@@ -112,6 +112,16 @@ export const FEATURE_UPDATES = [
       { title: 'An occasional shortcut', body: 'The folder is remembered per repository in this browser. Source views carry their displayed line into the link. This opens the local working tree, which may differ from the PR revision; it does not switch branches.' },
     ],
   },
+  {
+    version: 1794181746411,
+    title: 'Reference links stay with your PR review',
+    summary: 'Changed files open in their PR diff. Other files open as read-only context in the reference rail.',
+    howToTry: 'Open a symbol’s Usages, then click a filename or result. PR change labels identify files in the current comparison. Repository context stays beside the review; Back to references returns to the results. Browser Back and Forward restore both.',
+    changes: [
+      { title: 'Keep the review in place', body: 'Reference jumps reveal collapsed files and lines outside visible hunks, including docked diffs. Context previews and Open beside preserve the existing review files and comparison.' },
+      { title: 'Know which revision you are reading', body: 'Original-side references use original diff line numbers. Files outside the displayed comparison stay pinned to their requested revision in the rail.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';
