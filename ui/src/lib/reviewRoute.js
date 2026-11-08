@@ -38,9 +38,10 @@ export function normalizeReviewControls(value = {}) {
   const rules = record(input.rules) ? Object.fromEntries(Object.entries(input.rules).filter(([role, mode]) => ROLES.has(role) && VISIBILITY.has(mode)).sort(([a], [b]) => a.localeCompare(b))) : { ...DEFAULT_RULES };
   const overrides = record(input.overrides) ? Object.fromEntries(boundedPaths(Object.entries(input.overrides).filter(([path, mode]) => relativePath(path) && VISIBILITY.has(mode)).sort(([a], [b]) => a.localeCompare(b)))) : {};
   const expanded = Array.isArray(input.expanded) ? boundedPaths([...new Set(input.expanded.map(relativePath).filter(Boolean))]) : [];
+  const collapsedFolders = Array.isArray(input.collapsedFolders) ? boundedPaths([...new Set(input.collapsedFolders.map(relativePath).filter(Boolean))]) : [];
   const order = ORDERS.has(input.order) ? input.order : 'attention';
   const root = relativePath(input.root);
-  return { order, query: text(input.query, 1024), rules, overrides, ...(root ? { root } : {}), expanded, folders: order !== 'flow' && input.folders === true };
+  return { order, query: text(input.query, 1024), rules, overrides, ...(root ? { root } : {}), expanded, folders: order !== 'flow' && input.folders === true, collapsedFolders };
 }
 
 /** Pure, bounded URL snapshot. Missing controls/panes/search leave those surfaces untouched. */

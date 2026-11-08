@@ -85,3 +85,32 @@ test('failed source load can retry without discarding the chosen category rule',
   expect(actor.getSnapshot().context.rules.test).toBe('hide');
   actor.stop();
 });
+
+
+test('folder disclosure stays independent of visibility and survives grouping, URL restore and comparison transitions', () => {
+  const actor = createActor(organizationMachine.provide({ actors: { load: fromPromise(() => new Promise(() => {})) } }), { input: { comparison } });
+  actor.start();
+  actor.send({ type: 'FOLDER.TOGGLE', directory: 'src/a' });
+  expect(actor.getSnapshot().context.collapsedFolders).toEqual([]);
+  actor.send({ type: 'GROUP.TOGGLE' });
+  actor.send({ type: 'FOLDER.TOGGLE', directory: 'src/a' });
+  actor.send({ type: 'FOLDER.TOGGLE', directory: 'src/b' });
+  actor.send({ type: 'FOLDER.TOGGLE', directory: 'src/a' });
+  expect(actor.getSnapshot().context.collapsedFolders).toEqual(['src/b']);
+  const before = organizationModel(capture, emptyGraph(), defaultControls());
+  expect(organizationModel(capture, emptyGraph(), actor.getSnapshot().context).paths).toEqual(before.paths);
+  expect(organizationModel(capture, emptyGraph(), actor.getSnapshot().context).folded).toEqual(before.folded);
+  actor.send({ type: 'GROUP.TOGGLE' });
+  actor.send({ type: 'GROUP.TOGGLE' });
+  actor.send({ type: 'QUERY.SET', query: 'src/b' });
+  actor.send({ type: 'ORDER.SET', order: 'volume' });
+  actor.send({ type: 'COMPARISON.SET', comparison });
+  expect(actor.getSnapshot().context.collapsedFolders).toEqual(['src/b']);
+  actor.send({ type: 'SHOW_ALL' });
+  expect(actor.getSnapshot().context.collapsedFolders).toEqual([]);
+  actor.send({ type: 'CONTROLS.RESTORE', controls: { ...defaultControls(), folders: true, collapsedFolders: ['src/b'] } });
+  expect(actor.getSnapshot().context.collapsedFolders).toEqual(['src/b']);
+  actor.send({ type: 'COMPARISON.SET', comparison: { ...comparison, head: 'c'.repeat(40) } });
+  expect(actor.getSnapshot().context.collapsedFolders).toEqual([]);
+  actor.stop();
+});

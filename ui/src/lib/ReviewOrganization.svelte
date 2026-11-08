@@ -45,9 +45,9 @@
   const send = event => {
     const before = actor.getSnapshot().context;
     actor.send(event);
-    const { order, query, rules, overrides, root, expanded, folders } = actor.getSnapshot().context;
-    const previous = { order: before.order, query: before.query, rules: before.rules, overrides: before.overrides, root: before.root, expanded: before.expanded, folders: before.folders };
-    const next = { order, query, rules, overrides, root, expanded, folders };
+    const { order, query, rules, overrides, root, expanded, folders, collapsedFolders } = actor.getSnapshot().context;
+    const previous = { order: before.order, query: before.query, rules: before.rules, overrides: before.overrides, root: before.root, expanded: before.expanded, folders: before.folders, collapsedFolders: before.collapsedFolders };
+    const next = { order, query, rules, overrides, root, expanded, folders, collapsedFolders };
     if (JSON.stringify(previous) !== JSON.stringify(next)) onControlsChange?.(next, event.type === 'QUERY.SET' ? 'replace' : 'push');
   };
   async function select(path) {
@@ -127,10 +127,18 @@
   {/if}
   <div class="queue" aria-label="Ordered changed files">
     {#each groups as group}
-      {#if group.name}<div class="folder">{group.name}</div>{/if}
-      {#each group.entries as entry (entry.file.filename)}
-        {@render queueEntry(entry)}
-      {/each}
+      <div class="folder-group">
+        {#if group.name}
+          <button class="folder" aria-expanded={!controls.collapsedFolders.includes(group.name)} aria-label={`${controls.collapsedFolders.includes(group.name) ? 'Expand' : 'Collapse'} folder ${group.name}`} data-event="organization-toggle-folder" onclick={() => send({ type: 'FOLDER.TOGGLE', directory: group.name })}>
+            <span class="folder-chevron" aria-hidden="true">{controls.collapsedFolders.includes(group.name) ? '▸' : '▾'}</span><span class="folder-name">{group.name}</span><span class="count">{group.entries.length}</span>
+          </button>
+        {/if}
+        {#if !group.name || !controls.collapsedFolders.includes(group.name)}
+          {#each group.entries as entry (entry.file.filename)}
+            {@render queueEntry(entry)}
+          {/each}
+        {/if}
+      </div>
     {/each}
     {#if !model.visible.length}<p class="note">No visible files match. <button onclick={() => { send({ type: 'QUERY.SET', query: '' }); send({ type: 'SHOW_ALL' }); }}>Show all files</button></p>{/if}
   </div>
@@ -178,7 +186,10 @@
   .path strong { font-weight:500; font-family:var(--font-code,monospace); }
   small { color:var(--text-dim); margin-top:4px; font-size:10px; }
   .rank, .count { color:var(--text-faint); font-size:10px; }
-  .folder { padding:12px 4px 4px; color:var(--text-dim); overflow-wrap:anywhere; }
+  .folder { display:flex; align-items:baseline; gap:6px; width:100%; padding:12px 4px 7px; color:var(--text-dim); text-align:left; }
+  .folder:hover { color:var(--text); background:var(--bg-hover); }
+  .folder-chevron { flex:none; }
+  .folder-name { flex:1; min-width:0; overflow-wrap:anywhere; }
   .restore-file, .related { display:block; width:100%; padding:8px 2px; text-align:left; }
   .related small { white-space:normal; }
   .related-label { margin-top:14px; }

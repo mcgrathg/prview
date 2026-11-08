@@ -8,9 +8,9 @@ export const organizationKey = (comparison: Comparison) => `${comparison.repo}#$
 export type OrganizationOrder = 'attention' | 'original' | 'volume' | 'flow';
 export interface Controls {
   order: OrganizationOrder; query: string; rules: VisibilityRules; overrides: Record<string, Visibility>;
-  root?: string; expanded: string[]; folders: boolean;
+  root?: string; expanded: string[]; folders: boolean; collapsedFolders: string[];
 }
-export const defaultControls = (): Controls => ({ order: 'attention', query: '', rules: { ...defaultRules }, overrides: {}, expanded: [], folders: false });
+export const defaultControls = (): Controls => ({ order: 'attention', query: '', rules: { ...defaultRules }, overrides: {}, expanded: [], folders: false, collapsedFolders: [] });
 interface Context extends Controls {
   comparison: Comparison; result: { capture: Capture; graph: ReferenceGraph } | null; error: string | null;
 }
@@ -24,6 +24,7 @@ type Event =
   | { type: 'ROLE.RESET'; role: Role }
   | { type: 'FILE.SET'; path: string; visibility?: Visibility }
   | { type: 'FILE.TOGGLE'; path: string }
+  | { type: 'FOLDER.TOGGLE'; directory: string }
   | { type: 'FLOW.FOLLOW'; path?: string };
 
 export const organizationMachine = setup({
@@ -75,7 +76,9 @@ export const organizationMachine = setup({
       ? context.expanded.filter(path => path !== event.path) : [...context.expanded, event.path] })) },
     'FLOW.FOLLOW': { actions: assign(({ event }) => ({ order: 'flow' as const, root: event.path, folders: false })) },
     'GROUP.TOGGLE': { guard: ({ context }) => context.order !== 'flow', actions: assign(({ context }) => ({ folders: !context.folders })) },
-    SHOW_ALL: { actions: assign(() => ({ rules: {}, overrides: {}, expanded: [] })) },
+    'FOLDER.TOGGLE': { guard: ({ context }) => context.folders, actions: assign(({ context, event }) => ({ collapsedFolders: context.collapsedFolders.includes(event.directory)
+      ? context.collapsedFolders.filter(directory => directory !== event.directory) : [...context.collapsedFolders, event.directory] })) },
+    SHOW_ALL: { actions: assign(() => ({ rules: {}, overrides: {}, expanded: [], collapsedFolders: [] })) },
   },
   states: {
     loading: { invoke: { src: 'load', input: ({ context }) => context.comparison,

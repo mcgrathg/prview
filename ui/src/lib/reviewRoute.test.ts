@@ -39,14 +39,21 @@ describe('shareable review snapshots', () => {
   });
   test('keeps bounded organization snapshots readable at their maximum path lengths', () => {
     const paths = Array.from({ length: 250 }, (_, i) => `${i}-${'q'.repeat(2000)}`);
-    const review = normalizeReviewState({ controls: { overrides: Object.fromEntries(paths.map(path => [path, 'show'])), expanded: paths } });
+    const review = normalizeReviewState({ controls: { overrides: Object.fromEntries(paths.map(path => [path, 'show'])), expanded: paths, collapsedFolders: paths } });
     expect(parseReviewRoute(buildReviewHash('acme/widgets', 12, review))?.review).toEqual(review);
   });
   test('restores organization defaults, explicit Show all and bounded valid controls', () => {
     const controls = { order: 'flow', query: 'test', rules: {}, overrides: { 'src/a.ts': 'show', '../bad': 'hide', 'src/b.ts': 'invalid' }, root: 'src/a.ts', expanded: ['src/a.ts', '../bad', 'src/a.ts'], folders: true };
     const restored = parseReviewRoute(buildReviewHash('acme/widgets', 12, { controls }))?.review.controls;
-    expect(restored).toEqual({ order: 'flow', query: 'test', rules: {}, overrides: { 'src/a.ts': 'show' }, root: 'src/a.ts', expanded: ['src/a.ts'], folders: false });
+    expect(restored).toEqual({ order: 'flow', query: 'test', rules: {}, overrides: { 'src/a.ts': 'show' }, root: 'src/a.ts', expanded: ['src/a.ts'], folders: false, collapsedFolders: [] });
     expect(normalizeReviewState({ controls: {} }).controls.rules).toEqual({ snapshot: 'fold', fixture: 'fold' });
+  });
+  test('round trips collapsed directories and reads older controls as fully expanded', () => {
+    const controls = { folders: true, collapsedFolders: ['src/feature', '../bad', 'Repository root', 'src/feature'] };
+    const restored = parseReviewRoute(buildReviewHash('acme/widgets', 12, { controls }))?.review.controls;
+    expect(restored?.collapsedFolders).toEqual(['src/feature', 'Repository root']);
+    expect(restored?.folders).toBe(true);
+    expect(parseReviewRoute('#/pr/acme/widgets/12/files?controls=%7B%22folders%22%3Atrue%7D')?.review.controls?.collapsedFolders).toEqual([]);
   });
   test('restores independent panes and a valid active pane without sharing references', () => {
     const input = { panes: [{ id: 'primary', file: 'a.ts', line: 2, layout: 'split' }, { id: 'other', file: 'b.ts', line: 8, side: 'left', layout: 'unified' }], active: 'other' };
