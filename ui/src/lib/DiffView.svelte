@@ -808,6 +808,37 @@
     flushSync();
   }
 
+  export async function revealLocation(index, line = null, side = 'right', signal) {
+    const file = files[index];
+    if (!file || signal?.aborted) return;
+    revealFile(index);
+    pendingPaths.delete(file.path);
+    hotPaths.add(file.path);
+    const loaded = await onWarmFile?.(file.path, true);
+    if (signal?.aborted) return;
+    if (loaded) hydratedFiles.set(file.path, loaded);
+    const shown = loaded ?? hydratedFiles.get(file.path) ?? file;
+    const split = usesSplitLayout(shown);
+    for (const hunk of shown.hunks) {
+      const rows = split ? pairedRows(hunk.rows) : hunk.rows;
+      const chunks = displayedChunks(shown, rows, split);
+      if (!chunks) continue;
+      const wanted = chunks.find(chunk => chunk.rows.some(row => {
+        const target = split ? row[side === 'left' ? 'left' : 'right'] : row;
+        return target?.[side === 'left' ? 'oldNum' : 'newNum'] === line;
+      }));
+      hotRowChunks.add(wanted ?? chunks[0]);
+    }
+    await tick();
+    if (signal?.aborted) return;
+    const section = document.getElementById(`diff-file-${index}`);
+    section?.scrollIntoView({ block: 'start' });
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    if (signal?.aborted) return;
+    const target = line && section?.querySelector(`[data-${side === 'left' ? 'old' : 'new'}-line="${line}"]`);
+    (target ?? section)?.scrollIntoView({ block: target ? 'center' : 'start' });
+  }
+
   function firstSectionBelow(from, to, y) {
     let low = from;
     let high = to;

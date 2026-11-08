@@ -126,9 +126,11 @@
   let pr = $state.raw(null);
   let actionsRunUrl = $state(null);
   const organizationEnabled = new URL(location.href).searchParams.get("organize") === "1";
-  const navigationActor = createActor(reviewNavigationMachine, { input: { review: untrack(() => reviewLocation) } }).start();
-  onDestroy(() => navigationActor.stop());
-  let reviewState = $derived(normalizeReviewState(reviewLocation));
+  const navigationActor = createActor(reviewNavigationMachine, { input: { review: untrack(() => reviewLocation), apply: applyReviewLocation } }).start();
+  let navigationSnapshot = $state(navigationActor.getSnapshot());
+  const navigationSubscription = navigationActor.subscribe(next => navigationSnapshot = next);
+  onDestroy(() => { navigationSubscription.unsubscribe(); navigationActor.stop(); });
+  let reviewState = $derived(navigationSnapshot.context.review);
   let workspace = $state(null);
   let workspaceEnabled = $derived(organizationEnabled && Boolean(reviewState.panes?.length));
   let activeReviewPane = $derived(reviewState.panes?.find(p => p.id === reviewState.active));
@@ -138,9 +140,13 @@
   let restoredLocation = '';
   function navigateReview(patch, mode = 'push') {
     if (!organizationEnabled || !pr) return;
-    const next = normalizeReviewState({ ...reviewState, rev: range?.head ?? pr.headRefOid, base: range?.base ?? pr.baseRefOid, ...patch });
-    navigationActor.send({ type: 'NAVIGATE', review: next, historyMode: mode });
-    commitReviewLocation(repo, number, next, mode);
+    navigationActor.send({ type: 'PATCH', patch: { rev: range?.head ?? pr.headRefOid, base: range?.base ?? pr.baseRefOid, ...patch }, historyMode: mode });
+    commitReviewLocation(repo, number, navigationActor.getSnapshot().context.review, mode);
+  }
+  function setReviewLayout(layout) {
+    if (workspaceEnabled) { workspace?.updatePane(reviewState.active, { layout }); return; }
+    navigationActor.send({ type: 'LAYOUT.SET', layout });
+    commitReviewLocation(repo, number, navigationActor.getSnapshot().context.review);
   }
   function navigatePane(patch, mode = 'push') {
     if (patch.file && patch.view === 'source') {
@@ -175,29 +181,31 @@
   }
   $effect(() => {
     if (!organizationEnabled || !pr || tab !== 'files') return;
-    const target = reviewState;
+    const target = normalizeReviewState(reviewLocation);
     untrack(() => {
-      navigationActor.send({ type: 'RESTORE', review: target });
+      if (JSON.stringify(target) !== JSON.stringify(navigationActor.getSnapshot().context.review)) navigationActor.send({ type: 'RESTORE', review: target });
       const key = target.rev && target.base && (target.rev !== pr.headRefOid || target.base !== pr.baseRefOid) ? `r${target.base}:${target.rev}` : 'all';
       if (rangeKey !== key) rangeKey = key;
     });
   });
+  async function applyReviewLocation(target, signal) {
+    if (!target.file || target.view !== 'diff' || target.panes?.length) return;
+    if (!files.some(f => f.path === target.file) && comparisonFiles.some(f => f.path === target.file)) await organizationPanel?.revealFile(target.file, false);
+    await tick();
+    if (signal.aborted) return;
+    const index = files.findIndex(file => file.path === target.file);
+    if (index < 0) return;
+    fileIndex = index;
+    spyHoldUntil = performance.now() + 600;
+    await diffView?.revealLocation(index, target.line, target.side, signal);
+  }
   $effect(() => {
     if (!organizationEnabled || !pr || tab !== 'files' || diffState !== 'ready') return;
     const target = reviewState;
-    const key = JSON.stringify([repo, number, displayedDiffKey, target.file, target.line, target.side, target.view, Boolean(target.panes)]);
-    const sequence = navigationActor.getSnapshot().context.sequence;
-    if (key === restoredLocation) { navigationActor.send({ type: 'APPLIED', sequence }); return; }
+    const key = JSON.stringify([repo, number, displayedDiffKey, target.file, target.line, target.side, target.view, target.layout, Boolean(target.panes)]);
+    if (key === restoredLocation) return;
     restoredLocation = key;
-    untrack(async () => {
-      if (target.file && target.view === 'diff' && !target.panes?.length) {
-        if (!files.some(f => f.path === target.file) && comparisonFiles.some(f => f.path === target.file)) await organizationPanel?.revealFile(target.file, false);
-        await tick();
-        if (navigationActor.getSnapshot().context.sequence !== sequence) return;
-        revealChangedFile(target.file, target.line, target.side);
-      }
-      navigationActor.send({ type: 'APPLIED', sequence });
-    });
+    untrack(() => navigationActor.send({ type: 'APPLY' }));
   });
   const viewedActor = createActor(reviewViewedMachine).start();
   let viewedSnapshot = $state(viewedActor.getSnapshot());
@@ -244,7 +252,7 @@
   let organizationCollapsed = $derived(organizationActive ? new Set([...collapsedFiles, ...organization.folded]) : collapsedFiles);
   function receiveOrganization(next) {
     const hadModel = organization?.key === next.key;
-    const selected = hadModel ? files[fileIndex]?.path : null;
+    const selected = reviewState.file ?? (hadModel ? files[fileIndex]?.path : null);
     const previousPaths = hadModel ? files.map(file => file.path).join("\n") : "";
     organization = next;
     fileIndex = Math.max(0, files.findIndex(file => file.path === selected));
@@ -2525,8 +2533,7 @@
   async function toggleDiffLayout() {
     if (organizationEnabled) {
       const layout = reviewState.layout === 'split' ? 'unified' : 'split';
-      if (workspaceEnabled) workspace?.updatePane(reviewState.active, { layout });
-      else navigateReview({ layout });
+      setReviewLayout(layout);
       return;
     }
     const previous = prefs.diffLayout;
@@ -3688,7 +3695,7 @@
                 </button>
               {/if}
               {#if organizationEnabled}
-                <div class="diff-layout-options" aria-label="Diff layout"><button class="toolbar-btn" aria-pressed={reviewState.layout === 'unified'} onclick={() => workspaceEnabled ? workspace?.updatePane(reviewState.active, { layout: 'unified' }) : navigateReview({ layout: 'unified' })}>Unified</button><button class="toolbar-btn" aria-pressed={reviewState.layout === 'split'} onclick={() => workspaceEnabled ? workspace?.updatePane(reviewState.active, { layout: 'split' }) : navigateReview({ layout: 'split' })}>Split</button></div>
+                <div class="diff-layout-options" aria-label="Diff layout"><button class="toolbar-btn" aria-pressed={reviewState.layout === 'unified'} onclick={() => setReviewLayout('unified')}>Unified</button><button class="toolbar-btn" aria-pressed={reviewState.layout === 'split'} onclick={() => setReviewLayout('split')}>Split</button></div>
                 <button class="toolbar-btn" onclick={() => openBeside(selectedPath ?? files[0]?.path)} disabled={!files.length}>Open beside</button>
                 {#if workspaceEnabled}<a class="toolbar-btn" href={`https://github.com/${repo}/pull/${number}`} target="_blank" rel="noopener noreferrer">GitHub PR</a><button class="toolbar-btn" onclick={() => workspace?.addView("files")}>Files pane</button><button class="toolbar-btn" onclick={() => workspace?.addView("related")}>Related pane</button><button class="toolbar-btn" onclick={() => workspace?.resetLayout()}>Reset layout</button><button class="toolbar-btn" onclick={() => navigateReview({ panes: undefined, active: undefined })}>Single view</button>{/if}
               {:else}<button class="toolbar-btn" onclick={toggleDiffLayout}>{prefs.diffLayout === "split" ? "unified" : "side by side"}</button>{/if}
@@ -3714,6 +3721,7 @@
           {/if}
           <div class="tree-resizer" role="separator" aria-orientation="vertical" onpointerdown={startTreeResize}></div>
           <div class="diff-pane">
+            {#if organizationEnabled && navigationSnapshot.matches("failed")}<div class="diff-status" role="alert">Could not restore this code location. <button onclick={() => navigationActor.send({ type: "APPLY" })}>Retry location</button></div>{/if}
             {#if organizationEnabled && !workspaceEnabled && reviewState.view === 'diff' && reviewState.file && diffState === 'ready' && !comparisonFiles.some(file => file.path === reviewState.file)}<div class="diff-status" role="alert">The requested file has no diff in this comparison: {reviewState.file}. Select another file or open its source.</div>{/if}
             {#if churnBaseRef && rangeKey === "since" && diffState === "ready"}
               <div class="churn-note">Merged in <span class="mono">{churnBaseRef}</span> since your visit — its churn is hidden, showing only this PR's changes</div>
