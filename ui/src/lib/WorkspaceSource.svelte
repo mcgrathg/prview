@@ -4,9 +4,12 @@
   import { langForPath } from './highlight.js';
   import { tokenizeCodeBlock } from './offThreadHighlight.js';
   import { theme } from './theme.svelte.js';
-  import { tokenAtPoint, columnWithin } from './wordAtPoint.js';
+  import { shouldFollowCodeLink } from './codeReference.js';
+  import { createDefinitionHover, tokenAtPoint, columnWithin } from './wordAtPoint.js';
   let { repo, pane, headRef = '', onDefinition, onNavigate } = $props();
   let root;
+  const definitionHover = createDefinitionHover(() => onDefinition, () => true);
+  $effect(() => () => definitionHover.destroy());
   const machine = setup({ actors: { load: fromPromise(async ({ input, signal }) => {
     const sha = input.pane.side === 'left' ? input.pane.base : input.pane.rev;
     if (!sha) throw new Error('This source pane has no pinned revision.');
@@ -45,8 +48,8 @@
     });
   });
   function lookup(event) {
-    if (!(event.ctrlKey || event.metaKey) || event.button !== 0) return;
-    const token = tokenAtPoint(event.clientX, event.clientY);
+    if (!event.target.closest(".source-code") || !shouldFollowCodeLink(event, true, window.getSelection()?.isCollapsed === false)) return;
+    const token = tokenAtPoint(event.clientX, event.clientY, true);
     const row = event.target.closest('.source-row');
     const code = row?.querySelector('.source-code');
     const character = token && code ? columnWithin(code, token) : null;
@@ -55,7 +58,7 @@
     onDefinition?.(token.word, pane.file, { line: Number(row.dataset.line), character }, pane);
   }
 </script>
-<div class="source-file" bind:this={root} onmousedown={lookup} role="region" aria-label={`Source ${pane.file}`}>
+<div class="source-file" bind:this={root} onclick={lookup} onmousemove={event => definitionHover.onMouseMove(event, event.target.closest(".source-code"))} onmouseleave={definitionHover.onMouseLeave} title="Click a symbol or import path to follow it; drag to select code" role="region" aria-label={`Source ${pane.file}`}>
   {#if snapshot.matches('loading')}<p role="status">Loading pinned source…</p>
   {:else if snapshot.matches('error')}<p role="alert">{snapshot.context.error} <button onclick={() => actor.send({ type: 'LOAD', request: { repo, headRef, pane } })}>Retry source</button></p>
   {:else}

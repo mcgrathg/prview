@@ -1,5 +1,4 @@
-const WORD_CHAR = /[A-Za-z0-9_$]/;
-const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+import { codeReferenceAt } from "./codeReference.js";
 
 const DEFINITION_HIGHLIGHT = "definition-link";
 let highlightOwner = null;
@@ -34,57 +33,47 @@ function textBlock(node) {
 
 // Identifier under the pointer, plus enough context to compute its column. Syntax highlighting and
 // word-diff marks split one identifier across text nodes, so the word extends through adjacent nodes.
-export function tokenAtPoint(x, y) {
-  let node;
-  let offset;
+export function tokenAtPoint(x, y, references = false) {
   const range = document.caretRangeFromPoint?.(x, y);
-  if (range) {
-    node = range.startContainer;
-    offset = range.startOffset;
-  } else {
-    const pos = document.caretPositionFromPoint?.(x, y);
-    if (!pos) return null;
-    node = pos.offsetNode;
-    offset = pos.offset;
-  }
+  const position = range ? { node: range.startContainer, offset: range.startOffset } : document.caretPositionFromPoint?.(x, y);
+  const node = position?.node ?? position?.offsetNode;
+  const offset = position?.offset;
   if (node?.nodeType !== Node.TEXT_NODE) return null;
-  const block = textBlock(node);
+  const code = node.parentElement?.closest(".code, .pl-code, .source-code");
+  const block = code ?? textBlock(node);
   if (!block) return null;
-  // Text nodes of this block in order; nodes nested in another block (a gutter cell) break words.
   const nodes = [];
   const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
   for (let current = walker.nextNode(); current; current = walker.nextNode()) {
-    // Empty nodes (framework anchors) separate nothing.
-    if (current.textContent || current === node) nodes.push(textBlock(current) === block ? current : null);
+    if (current.textContent || current === node) nodes.push(code || textBlock(current) === block ? current : null);
   }
   const index = nodes.indexOf(node);
   if (index < 0) return null;
-  const charAt = (at, position) => nodes[at]?.textContent[position] ?? "";
-  let startIndex = index;
-  let start = offset;
-  for (;;) {
-    if (start > 0 && WORD_CHAR.test(charAt(startIndex, start - 1))) start -= 1;
-    else if (start === 0 && nodes[startIndex - 1] && WORD_CHAR.test(charAt(startIndex - 1, nodes[startIndex - 1].textContent.length - 1))) {
-      startIndex -= 1;
-      start = nodes[startIndex].textContent.length;
-    } else break;
-  }
-  let endIndex = index;
-  let end = offset;
-  for (;;) {
-    const length = nodes[endIndex].textContent.length;
-    if (end < length && WORD_CHAR.test(charAt(endIndex, end))) end += 1;
-    else if (end === length && nodes[endIndex + 1] && WORD_CHAR.test(charAt(endIndex + 1, 0))) {
-      endIndex += 1;
-      end = 0;
-    } else break;
-  }
-  let word = "";
-  for (let at = startIndex; at <= endIndex; at += 1) {
-    const text = nodes[at].textContent;
-    word += text.slice(at === startIndex ? start : 0, at === endIndex ? end : text.length);
-  }
-  return IDENT.test(word) ? { word, node: nodes[startIndex], start, endNode: nodes[endIndex], end } : null;
+  let first = index;
+  let last = index;
+  while (nodes[first - 1]) first--;
+  while (nodes[last + 1]) last++;
+  const run = nodes.slice(first, last + 1);
+  const text = run.map(part => part.textContent).join("");
+  const at = run.slice(0, index - first).reduce((length, part) => length + part.textContent.length, 0) + offset;
+  const options = { modules: references, keywords: !references };
+  const reference = codeReferenceAt(text, at, options) ?? codeReferenceAt(text, at - 1, options);
+  if (!reference) return null;
+  const point = (column) => {
+    for (const part of run) {
+      if (column <= part.textContent.length) return { node: part, offset: column };
+      column -= part.textContent.length;
+    }
+    return null;
+  };
+  const start = point(reference.start);
+  const end = point(reference.end);
+  if (!start || !end) return null;
+  const hit = document.createRange();
+  hit.setStart(start.node, start.offset);
+  hit.setEnd(end.node, end.offset);
+  if (![...hit.getClientRects()].some(rect => x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom)) return null;
+  return { word: reference.word, node: start.node, start: start.offset, endNode: end.node, end: end.offset };
 }
 
 export function wordAtPoint(x, y) {
@@ -100,7 +89,7 @@ export function columnWithin(container, token) {
   return range.toString().length;
 }
 
-export function createDefinitionHover(enabled = () => true) {
+export function createDefinitionHover(enabled = () => true, direct = () => false) {
   let pointer = null;
   const owner = { container: null };
 
@@ -110,8 +99,8 @@ export function createDefinitionHover(enabled = () => true) {
 
   function update(modifierHeld) {
     clear();
-    if (!modifierHeld || !pointer || !enabled()) return;
-    const token = tokenAtPoint(pointer.x, pointer.y);
+    if (!(modifierHeld || direct()) || !pointer?.container || !enabled()) return;
+    const token = tokenAtPoint(pointer.x, pointer.y, direct());
     if (!token) return;
     showDefinitionHighlight(owner, pointer.container, token);
   }

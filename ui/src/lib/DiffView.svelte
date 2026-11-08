@@ -14,6 +14,7 @@
   import { normalizeFileEndings } from "./fileEndings.js";
   import { whenIdle } from "./preload.js";
   import { shouldToggleHoveredViewed } from "./dom.js";
+  import { shouldFollowCodeLink } from "./codeReference.js";
   import { columnWithin, createDefinitionHover, tokenAtPoint } from "./wordAtPoint.js";
   import Chevron from "./Chevron.svelte";
   import Kbd from "./Kbd.svelte";
@@ -77,7 +78,7 @@
     return () => query.removeEventListener("change", update);
   });
 
-  const definitionHover = createDefinitionHover(() => onLookupDefinition);
+  const definitionHover = createDefinitionHover(() => onLookupDefinition, () => enhancedReview);
   $effect(() => () => definitionHover.destroy());
 
   let openKey = $state(null);
@@ -151,9 +152,10 @@
     return character == null ? null : { line, character, side };
   }
 
-  function onCodeMouseDown(e, file) {
-    if (!onLookupDefinition || e.button !== 0 || !(e.ctrlKey || e.metaKey)) return;
-    const token = tokenAtPoint(e.clientX, e.clientY);
+  function onCodeClick(e, file) {
+    if (!onLookupDefinition || !e.target.closest(".code") || e.target.closest("a, button, input, textarea, [contenteditable]")) return;
+    if (!shouldFollowCodeLink(e, enhancedReview, window.getSelection()?.isCollapsed === false)) return;
+    const token = tokenAtPoint(e.clientX, e.clientY, enhancedReview);
     if (!token) return;
     const lineEl = token.node.parentElement?.closest(".line");
     if (!lineEl) return;
@@ -2451,9 +2453,10 @@
         <div
           class="hunks mono"
           class:split={usesSplitLayout(file)}
-          onmousemove={(e) => definitionHover.onMouseMove(e, e.target.closest(".hunks"))}
+          onmousemove={(e) => definitionHover.onMouseMove(e, e.target.closest(".code"))}
           onmouseleave={definitionHover.onMouseLeave}
-          onmousedown={(e) => onCodeMouseDown(e, file)}
+          onclick={(e) => onCodeClick(e, file)}
+          title={enhancedReview ? "Click a symbol or import path to follow it; drag to select code" : undefined}
           oncontextmenu={(event) => onEditContextMenu(event, file)}
         >
           {@render diffRows(file, whole.rows, null)}
@@ -2462,9 +2465,10 @@
         <div
           class="hunks mono"
           class:split={usesSplitLayout(file)}
-          onmousemove={(e) => definitionHover.onMouseMove(e, e.target.closest(".hunks"))}
+          onmousemove={(e) => definitionHover.onMouseMove(e, e.target.closest(".code"))}
           onmouseleave={definitionHover.onMouseLeave}
-          onmousedown={(e) => onCodeMouseDown(e, file)}
+          onclick={(e) => onCodeClick(e, file)}
+          title={enhancedReview ? "Click a symbol or import path to follow it; drag to select code" : undefined}
           oncontextmenu={(event) => onEditContextMenu(event, file)}
         >
           {#each file.hunks as hunk, hi}

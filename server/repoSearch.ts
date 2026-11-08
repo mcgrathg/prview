@@ -192,7 +192,7 @@ export async function findDefinition(
   signal?: AbortSignal,
   query?: DefinitionQuery,
 ): Promise<DefinitionResult> {
-  if (!IDENTIFIER_RE.test(symbol)) return { definition: null, candidates: [] };
+  if (!IDENTIFIER_RE.test(symbol) && !query) return { definition: null, candidates: [] };
 
   // Checker-backed resolution when the click carries an exact source position.
   // Runs in the AST worker; grep ranking below stays as the fallback for
@@ -213,6 +213,8 @@ export async function findDefinition(
     if (defs?.length === 1) return { definition: defs[0]!, candidates: defs };
     if (defs && defs.length > 1) return { definition: null, candidates: defs };
   }
+
+  if (!IDENTIFIER_RE.test(symbol)) return { definition: null, candidates: [] };
 
   const source = showFile(checkout, sha, fromPath) ?? "";
   const bindings = importedBindings(source, symbol);

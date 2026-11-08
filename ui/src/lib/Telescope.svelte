@@ -16,12 +16,13 @@
   import Kbd from "./Kbd.svelte";
   import FileFind from "./FileFind.svelte";
   import { matchRuns, positionRanges, queryRanges } from "./matchRuns.js";
+  import { shouldFollowCodeLink } from "./codeReference.js";
   import { columnWithin, createDefinitionHover, tokenAtPoint, wordAtPoint } from "./wordAtPoint.js";
 
   // With `hotkeys` off, Cmd+P and Cmd+Shift+F only switch modes once open; the owner opens it through `activate`.
-  let { repo, headSha, headRef, context = "", fileFilter = "all", changedFiles = [], onOpenChangedFile, onOpenHistory = null, onBack = null, reviewLocation = null, onReviewNavigate = null, definitionContext = null, hotkeys = true, open = $bindable(false) } = $props();
+  let { repo, headSha, headRef, context = "", fileFilter = "all", changedFiles = [], onOpenChangedFile, onOpenHistory = null, onBack = null, reviewLocation = null, onReviewNavigate = null, definitionContext = null, directCodeLinks = false, hotkeys = true, open = $bindable(false) } = $props();
 
-  const definitionHover = createDefinitionHover(() => view);
+  const definitionHover = createDefinitionHover(() => view, () => directCodeLinks);
   $effect(() => () => definitionHover.destroy());
 
   let mode = $state("search");
@@ -522,12 +523,15 @@
     return Number.isInteger(line) && line > 0 && character != null ? { line, character } : null;
   }
 
-  function onEditorMouseDown(e) {
-    if (e.button !== 0 || !(e.ctrlKey || e.metaKey) || !view) return;
-    const token = tokenAtPoint(e.clientX, e.clientY);
+  function onEditorClick(e) {
+    if (!view || !e.target.closest(".pl-code")) return;
+    if (!shouldFollowCodeLink(e, directCodeLinks, window.getSelection()?.isCollapsed === false)) return;
+    const token = tokenAtPoint(e.clientX, e.clientY, directCodeLinks);
     if (!token) return;
     e.preventDefault();
-    lookupDefinition(token.word, view.path, false, editorPosition(token));
+    const position = editorPosition(token);
+    if (position && reviewLocation?.view === "source" && reviewLocation.file === view.path) onReviewNavigate?.({ line: position.line }, "replace");
+    lookupDefinition(token.word, view.path, false, position);
   }
 
   function onEditorContext(e) {
@@ -686,7 +690,7 @@
           {#if view}{view.path}{#if view.line != null}:{view.line}{/if}{:else}no file{/if}
         </span>
         {#if !(fileOpen && findOpen)}
-          <span class="ts-hint">ctrl+click → definition{onOpenHistory ? " · right-click → mention history" : ""}</span>
+          <span class="ts-hint">{directCodeLinks ? "Click a symbol or import → definition · drag to select" : "Ctrl/Cmd-click → definition"}{onOpenHistory ? " · right-click → mention history" : ""}</span>
         {/if}
         {#if fileOpen}
           <FileFind bind:this={fileFind} bind:open={findOpen} root={editorEl} lines={preview?.status === "ready" ? preview.lines : []} revision={preview} />
@@ -700,9 +704,9 @@
         class="ts-editor mono"
         tabindex="-1"
         bind:this={editorEl}
-        onmousemove={(e) => definitionHover.onMouseMove(e, e.target.closest(".ts-editor"))}
+        onmousemove={(e) => definitionHover.onMouseMove(e, e.target.closest(".pl-code"))}
         onmouseleave={definitionHover.onMouseLeave}
-        onmousedown={onEditorMouseDown}
+        onclick={onEditorClick}
         oncontextmenu={onEditorContext}
       >
         {#if !view}

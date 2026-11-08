@@ -109,6 +109,23 @@ describe("grep / lsTree / showFile against a real repo", () => {
       symbol: "Widget",
     });
   });
+  test("findDefinition follows complete import strings through the pinned worker only", async () => {
+    const { root } = makeRepo();
+    const line = 'import { Widget } from "./app";';
+    writeFileSync(join(root, "src/consumer.ts"), line + '\nconst label = "./app";\n');
+    git(root, ["add", "-A"]);
+    git(root, ["commit", "-q", "-m", "module link"]);
+    const sha = git(root, ["rev-parse", "HEAD"]).trim();
+    const query = { repo: "owner/repo", position: { line: 1, character: line.indexOf('./app') } };
+    expect((await findDefinition(root, sha, "./app", "src/consumer.ts", undefined, query)).definition).toEqual({
+      path: "src/app.ts", line: 1, text: "export function Widget() { return 1; }", symbol: "./app",
+    });
+    expect(await findDefinition(root, sha, "./other", "src/consumer.ts", undefined, query)).toEqual({ definition: null, candidates: [] });
+    expect(await findDefinition(root, sha, "./app", "src/consumer.ts", undefined, {
+      repo: "owner/repo", position: { line: 2, character: 16 },
+    })).toEqual({ definition: null, candidates: [] });
+  });
+
   test("findDefinition leaves an unresolved package alias unresolved despite unrelated declarations", async () => {
     const { root } = makeRepo();
     writeFileSync(join(root, "src/unrelated.ts"), "export type Node = { unrelated: true };\n");

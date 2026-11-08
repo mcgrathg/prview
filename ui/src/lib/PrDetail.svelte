@@ -4679,7 +4679,7 @@
       <KeyBar keys={organizationEnabled ? footerCommands : tab === "files" ? filesKeys : tab === "agents" || tab === "actions" ? tabKeys : conversationKeys} onActivate={organizationEnabled ? item => runReviewShortcut(item.key) : null} />
     {/if}
 
-    <Telescope bind:this={telescope} reviewLocation={organizationEnabled ? workspaceEnabled ? { ...reviewState, view: 'diff' } : reviewState : null} onReviewNavigate={organizationEnabled ? navigatePane : null} {repo} headSha={organizationEnabled ? searchRevision : pr.headRefOid} definitionContext={organizationEnabled ? definitionContext : null} headRef={pr.headRefName} fileFilter={organizationEnabled ? "all" : fileFilter} changedFiles={organizationEnabled ? workspaceEnabled && searchRevision !== organizationComparison.head ? [] : comparisonFiles : files} onOpenChangedFile={openChangedFile} onOpenHistory={openFileHistory} bind:open={telescopeOpen} />
+    <Telescope bind:this={telescope} directCodeLinks={organizationEnabled} reviewLocation={organizationEnabled ? workspaceEnabled ? { ...reviewState, view: 'diff' } : reviewState : null} onReviewNavigate={organizationEnabled ? navigatePane : null} {repo} headSha={organizationEnabled ? searchRevision : pr.headRefOid} definitionContext={organizationEnabled ? definitionContext : null} headRef={pr.headRefName} fileFilter={organizationEnabled ? "all" : fileFilter} changedFiles={organizationEnabled ? workspaceEnabled && searchRevision !== organizationComparison.head ? [] : comparisonFiles : files} onOpenChangedFile={openChangedFile} onOpenHistory={openFileHistory} bind:open={telescopeOpen} />
     <FileHistory
       {repo}
       path={historyPath}

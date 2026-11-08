@@ -380,8 +380,20 @@ export function definitionsAt(
   } catch {
     return null;
   }
-  // Guard against stale coordinates: the clicked token must actually be there.
-  if (identifierAt(sourceFile.text, offset) !== symbol) return null;
+  let moduleString = false;
+  const findModule = (node: ts.Node): void => {
+    if (offset < node.getStart(sourceFile) || offset >= node.getEnd()) return;
+    if (ts.isStringLiteralLike(node) && node.text === symbol) {
+      const parent = node.parent;
+      moduleString = (ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)) && parent.moduleSpecifier === node
+        || ts.isExternalModuleReference(parent) && parent.expression === node
+        || ts.isCallExpression(parent) && parent.arguments[0] === node
+          && (parent.expression.kind === ts.SyntaxKind.ImportKeyword || ts.isIdentifier(parent.expression) && parent.expression.text === "require")
+        || ts.isLiteralTypeNode(parent) && ts.isImportTypeNode(parent.parent);
+    } else ts.forEachChild(node, findModule);
+  };
+  findModule(sourceFile);
+  if (!moduleString && identifierAt(sourceFile.text, offset) !== symbol) return null;
 
   const defs = entry.service.getDefinitionAtPosition(fileName, offset);
   if (!defs?.length) return null;
@@ -395,7 +407,7 @@ export function definitionsAt(
     if (!defSource) continue;
     const pos = ts.getLineAndCharacterOfPosition(defSource, def.textSpan.start);
     const lineText = defSource.text.split("\n")[pos.line] ?? "";
-    out.push({ path: repoPath, line: pos.line + 1, text: lineText.trim(), symbol: def.name });
+    out.push({ path: repoPath, line: pos.line + 1, text: lineText.trim(), symbol: moduleString ? symbol : def.name });
   }
   return out.length ? out : null;
 }

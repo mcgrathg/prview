@@ -98,6 +98,19 @@ describe("definitionsAt", () => {
     expect(defs).toEqual([{ path: "src/shape.ts", line: 2, text: "area() {", symbol: "area" }]);
   });
 
+  test("module strings open their source file while stale and ordinary strings stay unresolved", () => {
+    const line = 'import { shape } from "./shape-tools.js";';
+    const src = makeSource({
+      "src/shape-tools.ts": "export const shape = 1;\n",
+      "src/app.ts": line + '\nconst label = "./shape-tools.js";\n',
+    });
+    expect(definitionsAt(src, "src/app.ts", "./shape-tools.js", 1, line.indexOf('./shape'))).toEqual([
+      { path: "src/shape-tools.ts", line: 1, text: "export const shape = 1;", symbol: "./shape-tools.js" },
+    ]);
+    expect(definitionsAt(src, "src/app.ts", "./other.js", 1, line.indexOf('./shape'))).toBeNull();
+    expect(definitionsAt(src, "src/app.ts", "./shape-tools.js", 2, 15)).toBeNull();
+  });
+
   test("rejects when the clicked token does not match the symbol", () => {
     const src = makeSource({
       "src/app.ts": "export const width = 1;\n",
