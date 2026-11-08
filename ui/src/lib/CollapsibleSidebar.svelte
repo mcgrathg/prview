@@ -4,7 +4,7 @@
   import { isTypingTarget } from './dom.js';
   import { reviewSidebarMachine } from './reviewSidebarMachine.js';
 
-  let { children, count = null, onSearch, modalOpen = false, variant = 'review', heading = 'Changed files', storageKey = 'pr-cockpit:review-sidebar', defaultPinned = true, shortcuts = null } = $props();
+  let { children, count = null, onSearch, modalOpen = false, variant = 'review', heading = 'Changed files', storageKey = 'pr-cockpit:review-sidebar', defaultPinned = true, shortcuts = null, navigation = null } = $props();
   const preferenceKey = untrack(() => storageKey);
   let savedPinned = untrack(() => defaultPinned);
   try { const saved = localStorage.getItem(preferenceKey); if (saved === 'pinned' || saved === 'collapsed') savedPinned = saved === 'pinned'; } catch {}
@@ -59,12 +59,13 @@
   });
   $effect(() => { if (modalOpen) send({ type: 'CLOSE' }); });
   function sidebarEvents(node) {
+    const content = target => Boolean(target && node.contains(target) && !target.closest?.('[data-sidebar-navigation]'));
     const handlers = {
-      pointerenter: event => { if (event.pointerType !== 'touch') send({ type: 'POINTER_ENTER' }); },
-      pointerleave: () => send({ type: 'POINTER_LEAVE' }),
-      pointerdown: () => { if (!pinned) send({ type: 'OPEN' }); },
-      focusin: event => { if (!restoringFocus && !node.contains(event.relatedTarget)) send({ type: 'FOCUS_ENTER' }); },
-      focusout: event => { if (!node.contains(event.relatedTarget)) send({ type: 'FOCUS_LEAVE', hovered: node.matches(':hover') }); },
+      pointerover: event => { if (event.pointerType !== 'touch' && content(event.target) && !content(event.relatedTarget)) send({ type:'POINTER_ENTER' }); },
+      pointerout: event => { if (content(event.target) && !content(event.relatedTarget)) send({ type:'POINTER_LEAVE' }); },
+      pointerdown: event => { if (content(event.target) && !pinned) send({type:'OPEN'}); },
+      focusin: event => { if (!restoringFocus && content(event.target) && !content(event.relatedTarget)) send({type:'FOCUS_ENTER'}); },
+      focusout: event => { if (content(event.target) && !content(event.relatedTarget)) send({type:'FOCUS_LEAVE',hovered:node.matches(':hover') && !node.querySelector('[data-sidebar-navigation]:hover')}); },
       keydown,
       click: event => { if (variant === 'app' && event.target.closest?.('a[href]')) dismiss(); },
     };
@@ -79,6 +80,7 @@
 </script>
 
 <aside class="review-sidebar" class:pinned class:app={variant === 'app'} data-kind={variant} data-pinned={pinned} data-state={snapshot.value} bind:this={root} aria-label={`${heading} sidebar`} use:sidebarEvents>
+  {#if navigation}<div class="sidebar-navigation" data-sidebar-navigation>{@render navigation(!pinned)}</div>{/if}
   {#if !pinned}
     <nav class="compact-rail" aria-label={`Compact ${sidebarLabel}`}>
       <button bind:this={trigger} class="rail-button" type="button" aria-label={`Open ${sidebarLabel}`} aria-expanded={expanded} aria-controls={panelId} title={`${heading} — hover to preview, click to open`} onclick={() => send({ type: 'OPEN' })}>
@@ -92,7 +94,7 @@
     </nav>
   {/if}
   <div class="sidebar-panel" class:preview={!pinned} hidden={!expanded} inert={!expanded} id={panelId}>
-    <div class="sidebar-heading"><strong>{heading}{#if count !== null} <small>{count}</small>{/if}</strong><div class="sidebar-actions">
+    <div class="sidebar-heading"><strong class:history-heading={navigation && pinned}>{heading}{#if count !== null} <small>{count}</small>{/if}</strong><div class="sidebar-actions">
       {#if !pinned}<button type="button" aria-label={`Pin ${sidebarLabel} open`} title={`Keep ${sidebarLabel} open`} onclick={pin}>{@render pinIcon()}</button>{/if}
       <button bind:this={collapseButton} type="button" aria-label={pinned ? `Collapse ${sidebarLabel}` : `Close ${sidebarLabel} preview`} title={pinned ? 'Collapse sidebar — hover the compact rail to reopen' : 'Close preview'} onclick={pinned ? collapse : dismiss}>{@render panelIcon()}</button>
     </div></div>
@@ -126,7 +128,12 @@
   .review-sidebar.app { grid-column:1; grid-row:2; position:relative; top:0; height:100%; max-height:none; z-index:30; }
   .app .sidebar-panel { height:100%; max-height:100%; background:var(--panel); }
   .app .sidebar-panel.preview { top:8px; height:calc(100% - 16px); }
-  .app .compact-rail { height:100%; padding-top:12px; }
+  .app {display:flex; flex-direction:column;}
+  .app .compact-rail { flex:1; min-height:0; height:auto; padding-top:12px; padding-bottom:8px; overflow-y:auto; }
+  .sidebar-navigation { padding:12px 4px 0; width:44px; box-sizing:border-box; border-right:1px solid var(--border-soft); flex-shrink:0; -webkit-app-region:no-drag; }
+  .pinned .sidebar-navigation { position:absolute; z-index:2; top:0; left:4px; width:auto; border:0; }
+  .history-heading { visibility:hidden; }
+  .app .sidebar-panel.preview { max-height:calc(100% - 16px); }
   .app .sidebar-heading { padding:12px 8px; }
   .app .sidebar-body { flex:1; }
   .compact-rail :global(a) { display:flex; justify-content:center; align-items:center; width:36px; height:36px; border-radius:6px; color:var(--text-dim); }
@@ -135,6 +142,7 @@
   .compact-rail :global(a svg) { width:18px; height:18px; }
   @media (max-width:940px) { .review-sidebar { top:12px; } .review-sidebar.pinned:not(.app) { position:relative; grid-column:1 / -1; grid-row:2; margin-bottom:12px; } .pinned:not(.app) .sidebar-panel { max-height:250px; } }
   @media (max-width:700px) {
+    .app.pinned .sidebar-navigation { left:50px; top:8px; }
     .app.pinned .sidebar-panel { position:absolute; left:46px; top:8px; width:min(280px, calc(100vw - 80px)); height:calc(100% - 16px); border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow-dialog); }
   }
 </style>

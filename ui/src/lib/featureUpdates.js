@@ -31,6 +31,15 @@ export const FEATURE_UPDATES = [
       { title: 'Follow the right code', body: 'Head and original source keep their pinned revisions. Member names such as get and set are clickable, and browser Back returns to the exact caller after an explicit jump.' },
     ],
   },
+  {
+    version: 1794170582849,
+    title: 'More room for code, navigation in the rail',
+    summary: 'Home, Back and Forward now belong to the left navigation instead of a separate row above the review.',
+    howToTry: 'Use the first three buttons in the collapsed left rail. Pin the sidebar open to see them in a compact horizontal row beside its collapse button.',
+    changes: [
+      { title: 'Keep navigation close', body: 'History controls stay reachable without opening the sidebar preview. The browser review gains the space previously reserved for their top row.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';

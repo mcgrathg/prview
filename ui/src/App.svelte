@@ -417,11 +417,11 @@
       <button class="nav-item feature-updates-link" class:compact class:unread={changelogUnread} type="button" data-event="open-feature-updates" aria-label={changelogUnread ? 'What’s new, unread updates' : 'What’s new'} title={changelogUnread ? 'What’s new · Unread updates' : 'What’s new'} onclick={()=>releaseNotes?.showAll()}><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 3h12v14H4zM7 7h6M7 10h6M7 13h4"/></svg><span>What’s new</span></button>
     {/snippet}
     {#if collapsibleNavigation}
-      <CollapsibleSidebar bind:this={appSidebar} variant="app" heading="Workspace" storageKey="pr-cockpit:app-sidebar" defaultPinned={false} onSearch={openPalette} shortcuts={appNavigationShortcuts}>
+      <CollapsibleSidebar bind:this={appSidebar} variant="app" heading="Workspace" storageKey="pr-cockpit:app-sidebar" defaultPinned={false} onSearch={openPalette} shortcuts={appNavigationShortcuts} navigation={appHistory}>
         <div class="app-sidebar collapsible-nav" data-area="nav">{@render appNavigationContents()}</div>
       </CollapsibleSidebar>
+      {#snippet appHistory(vertical)}<HistoryNav {vertical} backFallback={route.name === 'detail' ? '#/' : null} />{/snippet}
       {#snippet appNavigationShortcuts()}
-        <a href="#/" aria-label="Inbox" title="Inbox"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 4h14v12H3zm0 6h4l1 2h4l1-2h4"/></svg></a>
         <a href="#/actions" aria-label="Actions" title="Actions"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="m8 6 5 4-5 4z"/></svg></a>
         <a href="#/settings" aria-label="Settings" title="Settings"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="3"/><path d="M10 2v3m0 10v3M2 10h3m10 0h3M4 4l2 2m8 8 2 2M4 16l2-2m8-8 2-2"/></svg></a>
         {@render featureUpdatesLink(true)}
@@ -431,9 +431,9 @@
     {/if}
 
     <main class="app-main">
-      <div class="app-history">
+      {#if !collapsibleNavigation}<div class="app-history">
         <HistoryNav backFallback={route.name === "detail" ? "#/" : null} />
-      </div>
+      </div>{/if}
 
       {#if setupOpen}
         <Onboarding onDone={finishSetup} onCancel={() => (setupOpen = false)} />
@@ -916,7 +916,9 @@
 
   .app-shell.collapsible-navigation { --app-rail-width:216px; grid-template-columns:var(--app-rail-width) minmax(0, 1fr); grid-template-rows:auto minmax(0, 1fr); }
   .app-shell.collapsible-navigation:has(> :global(.review-sidebar.app[data-pinned='false'])) { --app-rail-width:48px; }
-  .app-shell.collapsible-navigation > .app-main { grid-column:2; grid-row:2; }
+  .app-shell.collapsible-navigation > .app-main { grid-column:2; grid-row:2; padding-top:0; }
+  .app-shell.collapsible-navigation:not(.shell) > .app-drag-region { display:none; }
+  .app-shell.collapsible-navigation.shell > .app-main { padding-top:42px; }
   .collapsible-nav.app-sidebar { display:flex; flex-direction:column; align-items:stretch; grid-row:auto; padding:4px 8px 12px; border:0; background:transparent; }
   .collapsible-nav .app-nav { flex-direction:column; justify-content:flex-start; gap:2px; }
   .collapsible-nav .nav-item { flex:none; flex-direction:row; justify-content:flex-start; width:100%; min-width:0; min-height:36px; padding:8px 10px; }

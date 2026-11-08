@@ -3,7 +3,7 @@
   import { isTypingTarget, isPromptDialogOpen } from "./dom.js";
   import { isRecordingShortcut } from "./shortcutCapture.js";
 
-  let { backFallback = null } = $props();
+  let { backFallback = null, vertical = false } = $props();
 
   $effect(() => {
     function onKey(e) {
@@ -20,7 +20,7 @@
   });
 </script>
 
-<div class="histnav">
+<nav class="histnav" class:vertical aria-label="History navigation">
   <button class="arrow" onclick={() => (location.hash = "#/")} title="Home" aria-label="Home">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z" />
@@ -30,15 +30,15 @@
     class="arrow"
     disabled={!history.canBack && !backFallback}
     onclick={() => goBackOrFallback(backFallback)}
-    title={backFallback ? "Back to inbox" : "Back"}
-    aria-label={backFallback ? "Back to inbox" : "Back"}
+    title={!history.canBack && backFallback ? "Back to inbox" : "Back"}
+    aria-label={!history.canBack && backFallback ? "Back to inbox" : "Back"}
   >
     <span aria-hidden="true">←</span>
   </button>
   <button class="arrow" disabled={!history.canForward} onclick={goForward} title="Forward" aria-label="Forward">
     <span aria-hidden="true">→</span>
   </button>
-</div>
+</nav>
 
 <style>
   .histnav {
@@ -46,6 +46,8 @@
     gap: 3px;
     -webkit-app-region: no-drag;
   }
+  .histnav.vertical { flex-direction:column; align-items:center; gap:9px; }
+  .histnav.vertical .arrow { width:36px; height:36px; }
   .arrow {
     width: 28px;
     height: 28px;
@@ -61,6 +63,7 @@
     -webkit-app-region: no-drag;
     transition: background 0.08s ease, color 0.08s ease;
   }
+  .arrow:focus-visible { outline:2px solid var(--link); outline-offset:1px; }
   .arrow:hover:not(:disabled) {
     background: var(--panel-raised);
     color: var(--text);
