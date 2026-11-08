@@ -69,3 +69,11 @@ test('a history URL at capacity restores its identity while archiving the displa
  const displaced=before.investigations.find(item=>!after.investigations.some(next=>next.id===item.id));
  expect(after.archived.some(item=>item.id===displaced.id)).toBe(true);expect(after.archived.some(item=>item.id===old.id)).toBe(false);actor.stop();
 });
+
+test('opening resolved code beside main is one independent pin transition',()=>{
+ const actor=make();actor.send({type:'OPEN',location:location('caller.ts',12)});const child=active(actor);
+ const before=child.getSnapshot().context.history;
+ child.send({type:'PIN',location:location('unchanged.ts',7)});
+ expect(child.getSnapshot().context.location.file).toBe('caller.ts');expect(child.getSnapshot().context.history).toBe(before);
+ expect(child.getSnapshot().context.preview).toBeNull();expect(child.getSnapshot().context.pinned[0]).toMatchObject({file:'unchanged.ts',line:7});actor.stop();
+});

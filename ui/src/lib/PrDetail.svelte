@@ -1107,6 +1107,12 @@
   let pendingReviewMutationBusy = $derived(pendingReviewMutations.some((mutation) => mutation.state === "pending"));
   let pendingReviewStarting = $derived(!pendingReview && queuedReviewCommentCount > 0);
 
+  async function submitFindingDraft(comment,mode) {
+    if(!commentable)throw new Error('Inline comments are unavailable for this PR comparison.');
+    if(comment.repo!==repo || comment.number!==number || comment.headSha!==pr?.headRefOid)throw new Error('The PR revision changed. Reopen a draft on the current comparison.');
+    const {repo:_repo,number:_number,...payload}=comment;
+    await (mode==='staged' ? stageInlineComment : submitInlineComment)(payload);
+  }
   async function submitInlineComment(comment) {
     await enqueueMutation(repo, number, { kind: "inline-comment", ...comment });
     await refreshMutations();
@@ -3738,7 +3744,7 @@
               {:else}<button class="toolbar-btn" onclick={toggleDiffLayout}>{prefs.diffLayout === "split" ? "unified" : "side by side"}</button>{/if}
             </div>
           </div>
-          {#if investigationsEnabled && diffState === 'ready'}{#key `${repo}#${number}`}<div class="investigation-slot"><InvestigationWorkbench {repo} {number} headRef={pr.headRefName} review={reviewState} restored={reviewLocation?.investigation} onRoute={(investigation,mode)=>navigateReview({investigation},mode)} /></div>{/key}{/if}
+          {#if investigationsEnabled && diffState === 'ready'}{#key `${repo}#${number}`}<div class="investigation-slot"><InvestigationWorkbench currentHead={pr.headRefOid} currentBase={pr.baseRefOid} pendingReviewsEnabled={prefs.pendingReviewsEnabled} {pendingReview} {pendingReviewStale} onSubmitDraft={submitFindingDraft} {repo} {number} headRef={pr.headRefName} review={reviewState} restored={reviewLocation?.investigation} onRoute={(investigation,mode)=>navigateReview({investigation},mode)} /></div>{/key}{/if}
           {#snippet sidebarContents()}
             {#if organizationEnabled && diffState === "ready" && comparisonFiles.length}
               <ReviewOrganization bind:this={organizationPanel} comparison={organizationComparison} nativeFiles={comparisonFiles} {selectedPath} onChange={receiveOrganization} onSelect={path => { openChangedFile(path); reviewSidebar?.dismiss(); }} onOpenBeside={path => { openBeside(path); reviewSidebar?.dismiss(); }} docking={workspaceEnabled} fileHref={path => buildReviewHash(repo, number, { ...reviewState, file: path, view: "diff", line: null, rev: organizationComparison.head, base: organizationComparison.base })} restoredControls={reviewState.controls} onControlsChange={(controls, mode) => navigateReview({ controls }, mode)} />

@@ -4,11 +4,15 @@
   import { symbolDestination } from './symbolContext.js';
   import { sourceLocation } from './investigationState.js';
   import { repoDefinition, repoReferences } from './api.js';
+  import InvestigationNotebook from './InvestigationNotebook.svelte';
+  import {investigationSnapshot} from './investigationState.js';
   import WorkspaceSource from './WorkspaceSource.svelte';
-  let { repo, number, headRef, review, restored = null, onRoute } = $props();
+  let { repo, number, headRef, review, restored = null, onRoute, currentHead, currentBase, pendingReviewsEnabled=false, pendingReview=null, pendingReviewStale=false, onSubmitDraft } = $props();
   const key = `prview:investigations:v1:${repo}#${number}`;
   let storageError = $state(''), commandError = $state(''), titleInput, tabs, reviewButton, mainRegion, originFocus, returnFocus;
   let overlayTop = $state(145);
+  let notebook, mainSource, previewSource;
+  let pinnedSources=$state([]);
   const session = createInvestigationSession({key,storage:localStorage,initial:untrack(()=>restored),
     lookup: ({request,signal}) => {
       const method=request.kind==='references' ? repoReferences : repoDefinition;
@@ -22,6 +26,7 @@
   const working = $derived.by(() => { changed; return active?.getSnapshot().context; });
   const lookup = $derived.by(() => { changed; return active?.getSnapshot().children.lookup?.getSnapshot(); });
   const result = $derived(lookup?.context.result);
+  const checkpoint=$derived.by(()=>{changed;return active ? investigationSnapshot(active) : null;});
   $effect(()=>{const requested=restored;untrack(()=>session.restore(requested));});
   $effect(() => { if (active) void tick().then(() => { if (tabs) overlayTop = Math.max(42,tabs.getBoundingClientRect().bottom); }); });
   function root(event,mode='push'){session.command(event,mode);}
@@ -46,9 +51,14 @@
     if (!position || (kind === 'references' && !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(symbol))) return;
     send({type:'LOOKUP',request:{kind,symbol,path,line:position.line,character:position.character,rev:location.rev,base:location.base}});
   }
+  function inspectEvidence(evidence) {
+    if(!active)root({type:'OPEN',title:'Inspect saved evidence',location:evidence});
+    else inspect(evidence,evidence.rev,evidence.base);
+  }
+  const draftAnchor=$derived(review.file && review.rev ? {repo,number,headSha:review.rev,path:review.file,side:review.side==='left' ? 'LEFT' : 'RIGHT',line:review.line ?? 1} : null);
   function openSymbol(definition,request,beside) {
     const location = symbolDestination(definition,request);
-    if (beside) { send({type:'INSPECT',location}); send({type:'KEEP'}); }
+    if (beside) send({type:'PIN',location});
     else send({type:'OPEN',location});
   }
   function promote() { if (working.preview) send({type:'OPEN',location:working.preview.location}); root({type:'PROMOTE',id:working.id}); void tick().then(()=>mainRegion?.focus()); }
@@ -61,6 +71,7 @@
   {#each snapshot.context.items as item}<div class="tab"><button class:selected={snapshot.context.active===item.id} onclick={()=>root({type:'SELECT',id:item.id})} title={item.ref.getSnapshot().context.title}>{item.ref.getSnapshot().context.title}{snapshot.context.main===item.id ? ' · Main' : ''}</button><button aria-label={`Close investigation ${item.ref.getSnapshot().context.title}`} onclick={()=>closeQuestion(item.id)}>×</button></div>{/each}
   {#if snapshot.context.archived.length}<details class="saved-questions"><summary>Saved questions ({snapshot.context.archived.length})</summary><div>{#each [...snapshot.context.archived].reverse() as item}<button onclick={event=>{ event.currentTarget.closest('details').open=false; root({type:'URL.RESTORE',state:item}); }}>{item.title}</button>{/each}</div></details>{/if}
   <button disabled={snapshot.context.items.length>=8 || !review.file} title={`Explore ${review.file} at ${review.rev?.slice(0,8) ?? 'unresolved revision'}`} onclick={event=>start(event)}>＋ Explore in side tab</button>
+  <InvestigationNotebook bind:this={notebook} {repo} {number} {currentHead} {currentBase} {pendingReviewsEnabled} {pendingReview} {pendingReviewStale} {onSubmitDraft} question={working ? {id:working.id,title:working.title} : null} {checkpoint} anchor={draftAnchor} top={overlayTop} onInspect={inspectEvidence} onResume={state=>root({type:'URL.RESTORE',state})} />
 </nav>
 {#if snapshot.context.notice}<p role="status">{snapshot.context.notice}</p>{/if}
 {#if commandError}<p role="alert">{commandError}</p>{/if}
@@ -74,9 +85,9 @@
   {:else if lookup?.matches('empty')}<p role="status">No semantic locations found.</p>{/if}
   <div class="investigation-body">
     <div class="code-columns">
-      <section class="investigation-main" bind:this={mainRegion} tabindex="-1"><h2 title={working.location.file}>{working.location.file}:{working.location.line}</h2><div class="workspace-scroll"><WorkspaceSource {repo} {headRef} onOpenSymbol={openSymbol} pane={working.location} onNavigate={patch=>send({type:'OPEN',location:{...working.location,...patch}})} onDefinition={(symbol,path,position)=>lookupCode('definition',symbol,path,position,working.location)} onReferences={(symbol,path,position)=>lookupCode('references',symbol,path,position,working.location)} /></div></section>
-      {#each working.pinned as pinned,index}<section><h2 title={pinned.file}>Kept beside · {pinned.file}<button aria-label={`Close comparison ${pinned.file}`} onclick={()=>send({type:'UNPIN',index})}>×</button></h2><div class="workspace-scroll"><WorkspaceSource {repo} {headRef} onOpenSymbol={openSymbol} pane={pinned} onDefinition={(symbol,path,position)=>lookupCode('definition',symbol,path,position,pinned)} onReferences={(symbol,path,position)=>lookupCode('references',symbol,path,position,pinned)} /></div></section>{/each}
-      {#if working.preview}<section class="investigation-preview" aria-label="Temporary code preview"><h2 title={working.preview.location.file}>Inspect · {working.preview.location.file}:{working.preview.location.line}</h2><div class="preview-actions"><button disabled={working.preview.trail.length<2} onclick={()=>send({type:'PREVIEW.BACK'})}>Preview back</button><button onclick={()=>send({type:'KEEP'})}>Keep beside</button><button onclick={closePreview}>Close preview</button></div><div class="workspace-scroll"><WorkspaceSource {repo} {headRef} onOpenSymbol={openSymbol} pane={working.preview.location} onNavigate={patch=>inspect({...working.preview.location,...patch},working.preview.location.rev,working.preview.location.base)} onDefinition={(symbol,path,position)=>lookupCode('definition',symbol,path,position,working.preview.location)} onReferences={(symbol,path,position)=>lookupCode('references',symbol,path,position,working.preview.location)} /></div></section>{/if}
+      <section class="investigation-main" bind:this={mainRegion} tabindex="-1"><h2 title={working.location.file}>{working.location.file}:{working.location.line}<button onpointerdown={event=>event.preventDefault()} onclick={()=>notebook?.saveEvidence(mainSource?.captureEvidence())}>Save evidence</button></h2><div class="workspace-scroll"><WorkspaceSource bind:this={mainSource} {repo} {headRef} onOpenSymbol={openSymbol} pane={working.location} onNavigate={patch=>send({type:'OPEN',location:{...working.location,...patch}})} onDefinition={(symbol,path,position)=>lookupCode('definition',symbol,path,position,working.location)} onReferences={(symbol,path,position)=>lookupCode('references',symbol,path,position,working.location)} /></div></section>
+      {#each working.pinned as pinned,index}<section><h2 title={pinned.file}>Kept beside · {pinned.file}<button onpointerdown={event=>event.preventDefault()} onclick={()=>notebook?.saveEvidence(pinnedSources[index]?.captureEvidence())}>Save evidence</button><button aria-label={`Close comparison ${pinned.file}`} onclick={()=>send({type:'UNPIN',index})}>×</button></h2><div class="workspace-scroll"><WorkspaceSource bind:this={pinnedSources[index]} {repo} {headRef} onOpenSymbol={openSymbol} pane={pinned} onDefinition={(symbol,path,position)=>lookupCode('definition',symbol,path,position,pinned)} onReferences={(symbol,path,position)=>lookupCode('references',symbol,path,position,pinned)} /></div></section>{/each}
+      {#if working.preview}<section class="investigation-preview" aria-label="Temporary code preview"><h2 title={working.preview.location.file}>Inspect · {working.preview.location.file}:{working.preview.location.line}</h2><div class="preview-actions"><button disabled={working.preview.trail.length<2} onclick={()=>send({type:'PREVIEW.BACK'})}>Preview back</button><button onclick={()=>send({type:'KEEP'})}>Keep beside</button><button onclick={closePreview}>Close preview</button><button onpointerdown={event=>event.preventDefault()} onclick={()=>notebook?.saveEvidence(previewSource?.captureEvidence())}>Save evidence</button></div><div class="workspace-scroll"><WorkspaceSource bind:this={previewSource} {repo} {headRef} onOpenSymbol={openSymbol} pane={working.preview.location} onNavigate={patch=>inspect({...working.preview.location,...patch},working.preview.location.rev,working.preview.location.base)} onDefinition={(symbol,path,position)=>lookupCode('definition',symbol,path,position,working.preview.location)} onReferences={(symbol,path,position)=>lookupCode('references',symbol,path,position,working.preview.location)} /></div></section>{/if}
     </div>
     {#if result?.references || (!result?.definition && result?.candidates?.length)}
       <aside aria-label="Investigation results"><h2>{lookup.context.request.kind==='references' ? 'Semantic references' : 'Definition candidates'} · {lookup.context.request.symbol}</h2><small>{lookup.context.request.rev.slice(0,8)}</small>{#if result.coverage?.limited}<p class="partial">Partial: {result.coverage.reasons.join(', ')}</p>{/if}{#each result.references ?? result.candidates as entry}<button class="result" title={entry.path} onclick={()=>inspect(entry,lookup.context.request.rev,lookup.context.request.base)}><strong>{entry.path}:{entry.line}</strong><code>{entry.text}</code></button>{/each}</aside>

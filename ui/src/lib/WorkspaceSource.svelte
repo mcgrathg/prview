@@ -4,6 +4,7 @@
   import { langForPath } from './highlight.js';
   import { tokenizeCodeBlock } from './offThreadHighlight.js';
   import { theme } from './theme.svelte.js';
+  import {sourceEvidence} from './sourceEvidence.js';
   import SymbolCard from './SymbolCard.svelte';
   import { symbolRequest } from './symbolContext.js';
   import CodeActionsMenu from './CodeActionsMenu.svelte';
@@ -52,6 +53,28 @@
       if (row && scroller) scroller.scrollTop += (row.getBoundingClientRect().top - scroller.getBoundingClientRect().top - scroller.clientHeight / 2) / (scroller.getBoundingClientRect().height / scroller.clientHeight || 1);
     });
   });
+  export function captureEvidence() {
+    if(!snapshot.matches('ready') || !snapshot.context.lines.length)return null;
+    const selection=window.getSelection();
+    const row=node=>(node?.nodeType===Node.ELEMENT_NODE ? node : node?.parentElement)?.closest('.source-row');
+    let startLine=pane.line ?? 1,endLine=startLine,endAtLineStart=false;
+    if(selection && !selection.isCollapsed && root?.contains(selection.anchorNode) && root?.contains(selection.focusNode)) {
+      const range=selection.getRangeAt(0),start=row(range.startContainer),end=row(range.endContainer);
+      if(!start || !end)return null;
+      startLine=Number(start.dataset.line);endLine=Number(end.dataset.line);
+      const code=end.querySelector('.source-code');
+      if(!code)return null;
+      if(code.contains(range.endContainer)) {
+        const prefix=document.createRange();prefix.selectNodeContents(code);prefix.setEnd(range.endContainer,range.endOffset);
+        endAtLineStart=prefix.toString().length===0;
+      } else {
+        const codeStart=document.createRange();codeStart.selectNodeContents(code);codeStart.collapse(true);
+        const endpoint=range.cloneRange();endpoint.collapse(false);
+        endAtLineStart=endpoint.compareBoundaryPoints(Range.START_TO_START,codeStart)<=0;
+      }
+    }
+    return sourceEvidence({repo,file:pane.file,rev:pane.side==='left' ? pane.base : pane.rev,base:pane.base,lines:snapshot.context.lines,startLine,endLine,endAtLineStart});
+  }
   function lookup(event) {
     if (!event.target.closest(".source-code")) return;
     if (event.detail > 1 || window.getSelection()?.isCollapsed === false) symbolCard?.close();

@@ -50,6 +50,16 @@ export const FEATURE_UPDATES = [
       { title: 'Scope stays clear', body: 'These are file-level candidates. Exact line attribution and earlier file names are outside this view; truncated histories and missing message bodies are labeled.' },
     ],
   },
+  {
+    version: 1794172925485,
+    title: 'Private findings for investigations',
+    summary: 'Keep notes, pinned code evidence and resumable checkpoints beside an investigation. Prepare an editable review draft when you choose.',
+    howToTry: 'In the investigation preview, choose Jot or Save evidence. Findings reopens the notebook; Resume investigation restores a checkpoint. Prepare review draft preserves existing comment text.',
+    changes: [
+      { title: 'Keep your evidence', body: 'Notes survive reload and question closure. Saved ranges retain their exact source revision; earlier revisions and shortened excerpts are labeled. Independent findings from other tabs are retained.' },
+      { title: 'Stay private until you publish', body: 'Finding bodies stay in this browser and out of shared URLs. Draft preparation adds your explanation and pinned source links to the native editor without posting a comment.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';
