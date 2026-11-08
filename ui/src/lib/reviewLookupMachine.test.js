@@ -48,3 +48,11 @@ test('fetching retries retain the captured origin and stop at their bound', asyn
   expect(actor.getSnapshot().context.result.status).toBe('fetching');
   actor.stop();
 });
+
+test('file commit context results use the shared cancellable lookup lifecycle',async()=>{
+  const actor=createActor(reviewLookupMachine,{input:{lookup:async()=>({status:'ok',commits:[{sha:'pinned',title:'Change',body:''}]})}}).start();
+  actor.send({type:'LOAD',request:{head:'pinned',base:'original'}});
+  await waitFor(actor,s=>s.matches('ready'));
+  expect(actor.getSnapshot().context.result.commits[0].sha).toBe('pinned');
+  actor.send({type:'CANCEL'});expect(actor.getSnapshot().matches('idle')).toBe(true);actor.stop();
+});

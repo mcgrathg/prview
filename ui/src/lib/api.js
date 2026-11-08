@@ -836,3 +836,9 @@ export async function uploadReviewAttachment(repo, number, capability, file, sig
   if (!response.ok) throw new Error(body?.error ?? `Attachment upload ${response.status}`);
   return body;
 }
+
+export async function reviewCommitContext(request, signal) {
+  const response = await fetch(`/api/review-commit-context?${new URLSearchParams(request)}`, {signal});
+  if (!response.ok) throw new Error(`Commit context request failed (${response.status}).`);
+  return response.json();
+}

@@ -14,6 +14,7 @@
   import { normalizeFileEndings } from "./fileEndings.js";
   import { whenIdle } from "./preload.js";
   import { shouldToggleHoveredViewed } from "./dom.js";
+  import CommitContext from './CommitContext.svelte';
   import SymbolCard from './SymbolCard.svelte';
   import { symbolRequest } from './symbolContext.js';
   import CodeActionsMenu from "./CodeActionsMenu.svelte";
@@ -90,6 +91,7 @@
 
   let codeMenu;
   let symbolCard;
+  let commitContext;
   let openKey = $state(null);
   let openCtx = $state(null);
   let draft = $state("");
@@ -2431,6 +2433,7 @@
                   : "whole file"}
           </button>
         {/if}
+        {#if enhancedReview && headSha && baseSha}<button class="commit-context-btn" title="Commit context for this file" aria-label={`Commit context for ${file.path}`} data-event="inspect-commit-context" onclick={event=>commitContext?.inspect(event,file.path)}><svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 10h4m8 0h4"/><circle cx="10" cy="10" r="4"/></svg></button>{/if}
         {#if onOpenHistory && base}
           <button class="whole-btn shortcut-action" onclick={() => onOpenHistory(file.path)}>
             History {#if file.path === historyShortcutPath}<Kbd keys="h" />{/if}
@@ -2622,10 +2625,15 @@
   {/if}
 </div>
 
-{#if enhancedReview}<SymbolCard bind:this={symbolCard} context={JSON.stringify([repo, headSha, baseSha, diffIdentity, layout])} onOpen={onOpenSymbol} onReferences={onLookupReferences} />{/if}
+{#if enhancedReview}<CommitContext bind:this={commitContext} {repo} head={headSha} base={baseSha} {headRef} /><SymbolCard bind:this={symbolCard} context={JSON.stringify([repo, headSha, baseSha, diffIdentity, layout])} onOpen={onOpenSymbol} onReferences={onLookupReferences} />{/if}
 <CodeActionsMenu bind:this={codeMenu} onInspect={enhancedReview ? inspectSymbol : null} onDefinition={onLookupDefinition} onReferences={onLookupReferences} onHistory={onOpenHistory} />
 
 <style>
+  .commit-context-btn {opacity:0;flex-shrink:0;display:flex;align-items:center;justify-content:center;width:24px;height:24px;padding:3px;border:0;border-radius:4px;background:transparent;color:var(--text-dim);cursor:pointer;}
+  .file-head-row:hover .commit-context-btn,.file-head-row:focus-within .commit-context-btn {opacity:1;}
+  .commit-context-btn:focus-visible {outline:2px solid var(--link);opacity:1;}
+  @media(pointer:coarse){.commit-context-btn{opacity:1;}}
+
   .viewed-dismissed, .file-edit-draft-status { color: var(--text-dim); font-size: 12px; }
   .file-edit-draft-status { padding: 0 12px 8px; }
 

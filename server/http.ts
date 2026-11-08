@@ -1,3 +1,4 @@
+import { fileCommitContext, validCommitContextRequest } from './reviewCommitContext.ts';
 import { fetchReviewViewed, writeReviewViewed, ReviewViewedError } from "./reviewViewed.ts";
 import { fetchReviewAttachmentCapability, uploadReviewAttachment, readReviewAttachmentForm, ReviewAttachmentError } from "./reviewAttachments.ts";
 import { reviewOrganization } from "./reviewOrganization.ts";
@@ -3291,6 +3292,21 @@ async function handleRepoDefinition(req: Request, url: URL): Promise<Response> {
 }
 
 
+async function handleReviewCommitContext(req: Request, url: URL): Promise<Response> {
+  const repo = url.searchParams.get('repo') ?? '';
+  const headRef = url.searchParams.get('headRef') ?? '';
+  const request = { head:url.searchParams.get('head') ?? '', base:url.searchParams.get('base') ?? '', path:url.searchParams.get('path') ?? '' };
+  if (!REPO_RE.test(repo) || !REF_RE.test(headRef) || !validCommitContextRequest(request)) return json({error:'invalid commit context request'},400);
+  try {
+    return await withSearchCtx(repo,headRef,request.head,async ctx => {
+      if (ctx.status !== 'ok') return json({status:ctx.status});
+      return json(await fileCommitContext(ctx.checkout,request,req.signal));
+    });
+  } catch {
+    return json({status:'unavailable',error:'Commit context is unavailable for this comparison.'});
+  }
+}
+
 async function handleRepoReferences(req: Request, url: URL): Promise<Response> {
   const repo = url.searchParams.get("repo") ?? "";
   const sha = url.searchParams.get("sha") ?? "";
@@ -4326,6 +4342,7 @@ export function buildFetchHandler(port: number, dependencyOverrides: Partial<Htt
     if (req.method === "GET" && url.pathname === "/api/repo-definition") {
       return handleRepoDefinition(req, url);
     }
+    if (req.method === 'GET' && url.pathname === '/api/review-commit-context') return handleReviewCommitContext(req,url);
     if (req.method === "GET" && url.pathname === "/api/repo-references") return handleRepoReferences(req, url);
     if (req.method === "GET" && url.pathname === "/api/repo-files") {
       return handleRepoFiles(url);

@@ -40,6 +40,16 @@ export const FEATURE_UPDATES = [
       { title: 'Keep navigation close', body: 'History controls stay reachable without opening the sidebar preview. The browser review gains the space previously reserved for their top row.' },
     ],
   },
+  {
+    version: 1794171156999,
+    title: 'Commit context when you need it',
+    summary: 'Inspect the commits behind a file without leaving its diff or adding a permanent panel.',
+    howToTry: 'Hover or focus a diff file header and choose its small commit icon. Read the real commit titles and messages, then press Escape to return.',
+    changes: [
+      { title: 'Messages at the selected comparison', body: 'The popover lists commits touching this file between the pinned revisions. Historical comparisons exclude later commits, and GitHub commit links open only when chosen.' },
+      { title: 'Scope stays clear', body: 'These are file-level candidates. Exact line attribution and earlier file names are outside this view; truncated histories and missing message bodies are labeled.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';

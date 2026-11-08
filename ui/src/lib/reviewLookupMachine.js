@@ -6,7 +6,7 @@ export const reviewLookupMachine = setup({
   guards: {
     fetching: ({ context, event }) => event.output.status === 'fetching' && context.attempt < context.maxRetries,
     unavailable: ({ event }) => event.output.status !== 'ok',
-    hasResults: ({ event }) => Boolean(event.output.definition || event.output.candidates?.length || event.output.references?.length),
+    hasResults: ({ event }) => Boolean(event.output.definition || event.output.candidates?.length || event.output.references?.length || event.output.commits?.length),
     hasRequest: ({ context }) => Boolean(context.request),
   },
   actions: {
