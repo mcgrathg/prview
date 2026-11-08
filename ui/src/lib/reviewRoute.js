@@ -1,4 +1,5 @@
 import { parseCommentTarget } from './commentTarget.js';
+import { normalizeInvestigation, shareInvestigation } from './investigationState.js';
 
 const ROLES = new Set(['source', 'test', 'configuration', 'manifest', 'documentation', 'snapshot', 'fixture', 'lockfile', 'unknown']);
 const VISIBILITY = new Set(['show', 'fold', 'hide']);
@@ -59,6 +60,8 @@ export function normalizeReviewControls(value = {}) {
 export function normalizeReviewState(value = {}) {
   const input = record(value) ? value : {};
   const result = position(input);
+  const investigation = normalizeInvestigation(input.investigation);
+  if (investigation) result.investigation = investigation;
   const references = normalizeReferenceOrigin(input.references);
   if (references) result.references = references;
   if (record(input.controls)) result.controls = normalizeReviewControls(input.controls);
@@ -119,7 +122,7 @@ export function parseReviewRoute(hash) {
   if (actionJobText !== null && (!/^\d+$/.test(actionJobText) || !Number.isSafeInteger(Number(actionJobText)))) return null;
   const review = normalizeReviewState({
     file: params.get('file'), line: params.get('line'), side: params.get('side'), view: params.get('view'), rev: params.get('rev'), base: params.get('base'), layout: params.get('layout'),
-    references: jsonParam(params, 'references'), controls: jsonParam(params, 'controls'), panes: jsonParam(params, 'panes'), active: params.get('active'), search: jsonParam(params, 'search'),
+    investigation: jsonParam(params, 'investigation'), references: jsonParam(params, 'references'), controls: jsonParam(params, 'controls'), panes: jsonParam(params, 'panes'), active: params.get('active'), search: jsonParam(params, 'search'),
   });
   return { name: 'detail', repo: `${match[1]}/${match[2]}`, number, tab, actionSha, actionJob: actionJobText === null ? null : Number(actionJobText), historyPath, historySymbol, commentTarget: parseCommentTarget(params.get('comment')), review };
 }
@@ -134,6 +137,9 @@ export function buildReviewHash(repo, number, review = {}) {
   if (state.view !== 'diff') params.set('view', state.view);
   for (const key of ['rev', 'base']) if (state[key]) params.set(key, state[key]);
   if (state.layout !== 'split') params.set('layout', state.layout);
+  if (state.investigation) {
+    params.set('investigation', JSON.stringify(shareInvestigation(state.investigation)));
+  }
   if (state.references) params.set('references', JSON.stringify(state.references));
   if (state.controls) params.set('controls', JSON.stringify(state.controls));
   if (state.panes) { params.set('panes', JSON.stringify(state.panes)); params.set('active', state.active); }

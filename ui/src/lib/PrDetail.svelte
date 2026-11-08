@@ -89,6 +89,7 @@
   import DiffView from "./DiffView.svelte";
   import FileHistory from "./FileHistory.svelte";
   import ReviewReferences from "./ReviewReferences.svelte";
+  import InvestigationWorkbench from "./InvestigationWorkbench.svelte";
   import { referenceOrigin } from "./codeReference.js";
   import Telescope from "./Telescope.svelte";
   import ConflictEditor from "./ConflictEditor.svelte";
@@ -128,6 +129,7 @@
   let pr = $state.raw(null);
   let actionsRunUrl = $state(null);
   const organizationEnabled = new URL(location.href).searchParams.get("organize") === "1";
+  const investigationsEnabled = organizationEnabled && new URL(location.href).searchParams.get("investigate") === "1";
   const navigationActor = createActor(reviewNavigationMachine, { input: { review: untrack(() => reviewLocation), apply: applyReviewLocation } }).start();
   let navigationSnapshot = $state(navigationActor.getSnapshot());
   const navigationSubscription = navigationActor.subscribe(next => navigationSnapshot = next);
@@ -3008,7 +3010,7 @@
     let downPressed = false;
     let upPressed = false;
     function onKey(e) {
-      if (isReviewFileDragging()) return;
+      if (isReviewFileDragging() || e.target.closest?.("[data-investigation-workbench]")) return;
       if (e.defaultPrevented) return;
       const keyOwner = prKeyOwner(e);
       if (keyOwner === "blur") {
@@ -3717,6 +3719,7 @@
               {:else}<button class="toolbar-btn" onclick={toggleDiffLayout}>{prefs.diffLayout === "split" ? "unified" : "side by side"}</button>{/if}
             </div>
           </div>
+          {#if investigationsEnabled && diffState === 'ready'}{#key `${repo}#${number}`}<div class="investigation-slot"><InvestigationWorkbench {repo} {number} headRef={pr.headRefName} review={reviewState} restored={reviewLocation?.investigation} onRoute={(investigation,mode)=>navigateReview({investigation},mode)} /></div>{/key}{/if}
           {#snippet sidebarContents()}
             {#if organizationEnabled && diffState === "ready" && comparisonFiles.length}
               <ReviewOrganization bind:this={organizationPanel} comparison={organizationComparison} nativeFiles={comparisonFiles} {selectedPath} onChange={receiveOrganization} onSelect={path => { openChangedFile(path); reviewSidebar?.dismiss(); }} onOpenBeside={path => { openBeside(path); reviewSidebar?.dismiss(); }} docking={workspaceEnabled} fileHref={path => buildReviewHash(repo, number, { ...reviewState, file: path, view: "diff", line: null, rev: organizationComparison.head, base: organizationComparison.base })} restoredControls={reviewState.controls} onControlsChange={(controls, mode) => navigateReview({ controls }, mode)} />
@@ -3725,7 +3728,7 @@
             {/if}
           {/snippet}
           {#if organizationEnabled}
-            <ReviewSidebar bind:this={reviewSidebar} modalOpen={Boolean(pickerMode || rangeOpen || historyOpen || telescopeOpen || shortcutRequest || confirmAction || mergeConfirm || forceMergeConfirm || promptOpen)} count={diffState === "ready" ? treeFiles.length : pr.changedFiles} onSearch={() => telescope?.activate('files')}>{@render sidebarContents()}</ReviewSidebar>
+            <ReviewSidebar bind:this={reviewSidebar} modalOpen={Boolean((investigationsEnabled && reviewState.investigation) || pickerMode || rangeOpen || historyOpen || telescopeOpen || shortcutRequest || confirmAction || mergeConfirm || forceMergeConfirm || promptOpen)} count={diffState === "ready" ? treeFiles.length : pr.changedFiles} onSearch={() => telescope?.activate('files')}>{@render sidebarContents()}</ReviewSidebar>
           {:else}
           <aside class="tree-pane">
             <div class="file-nav-head">
@@ -3736,7 +3739,7 @@
           </aside>
           {/if}
           <div class="tree-resizer" role="separator" aria-orientation="vertical" onpointerdown={startTreeResize}></div>
-          <div class="diff-pane">
+          <div inert={Boolean(investigationsEnabled && reviewState.investigation)} class="diff-pane">
             {#if organizationEnabled && navigationSnapshot.matches("failed")}<div class="diff-status" role="alert">Could not restore this code location. <button onclick={() => navigationActor.send({ type: "APPLY" })}>Retry location</button></div>{/if}
             {#if organizationEnabled && !workspaceEnabled && reviewState.view === 'diff' && reviewState.file && diffState === 'ready' && !comparisonFiles.some(file => file.path === reviewState.file)}<div class="diff-status" role="alert">The requested file has no diff in this comparison: {reviewState.file}. Select another file or open its source.</div>{/if}
             {#if churnBaseRef && rangeKey === "since" && diffState === "ready"}
@@ -7946,5 +7949,12 @@
   @media (max-width:940px) {
     .files-layout:has(> :global(.review-sidebar[data-pinned='false'])) > .diff-pane { grid-column:3; grid-row:2; }
     .files-layout:has(> :global(.review-sidebar[data-pinned='true'])) > .diff-pane { grid-column:1; grid-row:3; }
+  }
+  .investigation-slot { grid-column:1 / -1; grid-row:2; position:sticky; top:0; z-index:45; background:var(--bg); }
+  .files-layout:has(> .investigation-slot) > .diff-pane,
+  .files-layout:has(> .investigation-slot) > .tree-resizer,
+  .files-layout:has(> .investigation-slot) > :global(.review-sidebar) { grid-row:3; }
+  @media (max-width:940px) {
+    .files-layout:has(> .investigation-slot):has(> :global(.review-sidebar[data-pinned='true'])) > .diff-pane { grid-row:4; }
   }
 </style>

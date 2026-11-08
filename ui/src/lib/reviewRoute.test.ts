@@ -97,3 +97,13 @@ test('reference anchors and ordinary clicks produce the same pinned destination 
   expect(parseReviewRoute(buildReviewHash('owner/repo', 42, result)).review).toEqual(result);
   expect(reviewReferenceDestination({ ...state, active: 'p3' }, { path: 'src/usage.ts', line: 42 }).active).toBe('p1');
 });
+
+
+test('investigation URLs preserve the review anchor and the independent preview at an exact revision', () => {
+  const review = { file:'caller.ts',line:13,rev:'a'.repeat(40), investigation:{id:'i1',title:'How are errors handled?', location:{file:'source.ts',line:42,rev:'b'.repeat(40)},preview:{location:{file:'helper.ts',line:9,rev:'b'.repeat(40)},trail:[],origin:{file:'source.ts',line:42,rev:'b'.repeat(40)}}} };
+  const parsed = parseReviewRoute(buildReviewHash('owner/repo',1,review));
+  expect(parsed?.review.file).toBe('caller.ts'); expect(parsed?.review.line).toBe(13);
+  expect(parsed?.review.investigation?.location.file).toBe('source.ts');
+  expect(parsed?.review.investigation?.preview?.location.rev).toBe('b'.repeat(40));
+  expect(normalizeReviewState({...review,investigation:{...review.investigation,location:{file:'../bad',rev:'a'.repeat(40)}}}).investigation).toBeUndefined();
+});
