@@ -14,6 +14,8 @@
   import { normalizeFileEndings } from "./fileEndings.js";
   import { whenIdle } from "./preload.js";
   import { shouldToggleHoveredViewed } from "./dom.js";
+  import SymbolCard from './SymbolCard.svelte';
+  import { symbolRequest } from './symbolContext.js';
   import CodeActionsMenu from "./CodeActionsMenu.svelte";
   import { codeLinkAction } from "./codeReference.js";
   import { columnWithin, createDefinitionHover, tokenAtPoint } from "./wordAtPoint.js";
@@ -46,6 +48,9 @@
     showPrLink = true,
     viewedDisabled = false,
     headSha,
+    baseSha = null,
+    headRef = "",
+    onOpenSymbol = null,
     pendingInline,
     onInlineComment,
     onRetryMutation,
@@ -84,6 +89,7 @@
   $effect(() => () => definitionHover.destroy());
 
   let codeMenu;
+  let symbolCard;
   let openKey = $state(null);
   let openCtx = $state(null);
   let draft = $state("");
@@ -157,6 +163,7 @@
 
   function onCodeClick(e, file) {
     if (!onLookupDefinition || !e.target.closest(".code") || e.target.closest("a, button, input, textarea, [contenteditable]")) return;
+    if (e.detail > 1 || window.getSelection()?.isCollapsed === false) symbolCard?.close();
     const action = codeLinkAction(e, enhancedReview, window.getSelection()?.isCollapsed === false);
     if (!action || (action === "references" && !onLookupReferences)) return;
     const token = tokenAtPoint(e.clientX, e.clientY, enhancedReview);
@@ -164,7 +171,13 @@
     const lineEl = token.node.parentElement?.closest(".line");
     if (!lineEl) return;
     e.preventDefault();
-    (action === "references" ? onLookupReferences : onLookupDefinition)(token.word, file.path, linePosition(lineEl, token));
+    const position = linePosition(lineEl, token);
+    if (action === 'inspect') inspectSymbol(e, {symbol:token.word,path:file.path,position});
+    else (action === "references" ? onLookupReferences : onLookupDefinition)(token.word, file.path, position);
+  }
+
+  function inspectSymbol(event, target, keyboard = false) {
+    symbolCard?.inspect(event, symbolRequest(target.symbol, target.path, target.position, {repo, headRef, rev:headSha, base:baseSha, view:'diff'}), keyboard);
   }
 
   function renderedFileBody(section) {
@@ -2515,7 +2528,7 @@
           onmousemove={(e) => definitionHover.onMouseMove(e, e.target.closest(".code"))}
           onmouseleave={definitionHover.onMouseLeave}
           onclick={(e) => onCodeClick(e, file)}
-          title={enhancedReview ? "Click to follow; Alt-click for references; right-click for code actions; drag to select code" : undefined}
+          title={enhancedReview ? "Click to inspect; Cmd/Ctrl-click to follow; Alt-click for references; right-click for code actions; drag to select code" : undefined}
           oncontextmenu={(event) => onEditContextMenu(event, file)}
         >
           {@render diffRows(file, whole.rows, null)}
@@ -2527,7 +2540,7 @@
           onmousemove={(e) => definitionHover.onMouseMove(e, e.target.closest(".code"))}
           onmouseleave={definitionHover.onMouseLeave}
           onclick={(e) => onCodeClick(e, file)}
-          title={enhancedReview ? "Click to follow; Alt-click for references; right-click for code actions; drag to select code" : undefined}
+          title={enhancedReview ? "Click to inspect; Cmd/Ctrl-click to follow; Alt-click for references; right-click for code actions; drag to select code" : undefined}
           oncontextmenu={(event) => onEditContextMenu(event, file)}
         >
           {#each file.hunks as hunk, hi}
@@ -2609,7 +2622,8 @@
   {/if}
 </div>
 
-<CodeActionsMenu bind:this={codeMenu} onDefinition={onLookupDefinition} onReferences={onLookupReferences} onHistory={onOpenHistory} />
+{#if enhancedReview}<SymbolCard bind:this={symbolCard} context={JSON.stringify([repo, headSha, baseSha, diffIdentity, layout])} onOpen={onOpenSymbol} onReferences={onLookupReferences} />{/if}
+<CodeActionsMenu bind:this={codeMenu} onInspect={enhancedReview ? inspectSymbol : null} onDefinition={onLookupDefinition} onReferences={onLookupReferences} onHistory={onOpenHistory} />
 
 <style>
   .viewed-dismissed, .file-edit-draft-status { color: var(--text-dim); font-size: 12px; }

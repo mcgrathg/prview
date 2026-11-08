@@ -445,9 +445,9 @@ export async function repoFiles(repo, sha, headRef) {
   return res.json();
 }
 
-export async function repoFile(repo, sha, headRef, path) {
+export async function repoFile(repo, sha, headRef, path, signal) {
   const p = new URLSearchParams({ repo, sha, headRef, path });
-  const res = await fetch(`/api/repo-file?${p}`);
+  const res = await fetch(`/api/repo-file?${p}`, { signal });
   if (!res.ok) throw new Error(`repo-file ${res.status}`);
   return res.json();
 }

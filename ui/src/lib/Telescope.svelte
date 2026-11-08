@@ -17,17 +17,20 @@
   import Kbd from "./Kbd.svelte";
   import FileFind from "./FileFind.svelte";
   import { matchRuns, positionRanges, queryRanges } from "./matchRuns.js";
+  import SymbolCard from './SymbolCard.svelte';
+  import { symbolRequest } from './symbolContext.js';
   import CodeActionsMenu from "./CodeActionsMenu.svelte";
   import { codeLinkAction } from "./codeReference.js";
   import { columnWithin, createDefinitionHover, tokenAtPoint, wordAtPoint } from "./wordAtPoint.js";
 
   // With `hotkeys` off, Cmd+P and Cmd+Shift+F only switch modes once open; the owner opens it through `activate`.
-  let { repo, headSha, headRef, context = "", fileFilter = "all", changedFiles = [], onOpenChangedFile, onOpenHistory = null, onBack = null, reviewLocation = null, onReviewNavigate = null, definitionContext = null, directCodeLinks = false, onLookupReferences = null, hotkeys = true, open = $bindable(false) } = $props();
+  let { repo, headSha, headRef, onOpenSymbol = null, context = "", fileFilter = "all", changedFiles = [], onOpenChangedFile, onOpenHistory = null, onBack = null, reviewLocation = null, onReviewNavigate = null, definitionContext = null, directCodeLinks = false, onLookupReferences = null, hotkeys = true, open = $bindable(false) } = $props();
 
   const definitionHover = createDefinitionHover(() => view, () => directCodeLinks);
   $effect(() => () => definitionHover.destroy());
 
   let codeMenu;
+  let symbolCard;
   let mode = $state("search");
   let query = $state("");
   let matches = $state([]);
@@ -514,17 +517,23 @@
 
   function onEditorClick(e) {
     if (!view || !e.target.closest(".pl-code")) return;
+    if (e.detail > 1 || window.getSelection()?.isCollapsed === false) symbolCard?.close();
     const action = codeLinkAction(e, directCodeLinks, window.getSelection()?.isCollapsed === false);
     if (!action || (action === "references" && !onLookupReferences)) return;
     const token = tokenAtPoint(e.clientX, e.clientY, directCodeLinks);
     if (!token) return;
     e.preventDefault();
     const position = editorPosition(token);
+    if (action === 'inspect') { inspectSymbol(e, {symbol:token.word,path:view.path,position}); return; }
     if (position && reviewLocation?.view === "source" && reviewLocation.file === view.path) onReviewNavigate?.({ line: position.line }, "replace");
     if (action === "references") onLookupReferences(token.word, view.path, position);
     else lookupDefinition(token.word, view.path, false, position);
   }
 
+  function inspectSymbol(event, target, keyboard = false) {
+    const origin = reviewLocation?.view === 'source' && reviewLocation.file === target.path ? reviewLocation : {rev:headSha,base:reviewLocation?.base};
+    symbolCard?.inspect(event, symbolRequest(target.symbol, target.path, target.position, {repo, headRef, ...origin, view:'source'}), keyboard);
+  }
   function onEditorContext(e) {
     if (view && directCodeLinks && e.target.closest('.pl-code')) {
       const token = tokenAtPoint(e.clientX, e.clientY, true);
@@ -685,7 +694,7 @@
           {#if view}{view.path}{#if view.line != null}:{view.line}{/if}{:else}no file{/if}
         </span>
         {#if !(fileOpen && findOpen)}
-          <span class="ts-hint">{directCodeLinks ? "Click → definition · Alt-click → references · drag to select" : "Ctrl/Cmd-click → definition"}{directCodeLinks ? " · right-click → code actions" : onOpenHistory ? " · right-click → mention history" : ""}</span>
+          <span class="ts-hint">{directCodeLinks ? "Click → symbol card · Alt-click → references · drag to select" : "Ctrl/Cmd-click → definition"}{directCodeLinks ? " · right-click → code actions" : onOpenHistory ? " · right-click → mention history" : ""}</span>
         {/if}
         {#if fileOpen}
           <FileFind bind:this={fileFind} bind:open={findOpen} root={editorEl} lines={preview?.status === "ready" ? preview.lines : []} revision={preview} />
@@ -725,7 +734,8 @@
   </div>
 {/if}
 
-<CodeActionsMenu bind:this={codeMenu} onDefinition={(symbol, path, position) => lookupDefinition(symbol, path, false, position)} onReferences={onLookupReferences} onHistory={onOpenHistory ? (path, symbol) => { close(); onOpenHistory(path, symbol); } : null} />
+{#if directCodeLinks && open}<SymbolCard bind:this={symbolCard} context={JSON.stringify([repo,headSha,view?.path,view?.line,definitionContext])} onOpen={onOpenSymbol} onReferences={onLookupReferences} />{/if}
+<CodeActionsMenu bind:this={codeMenu} onInspect={directCodeLinks ? inspectSymbol : null} onDefinition={(symbol, path, position) => lookupDefinition(symbol, path, false, position)} onReferences={onLookupReferences} onHistory={onOpenHistory ? (path, symbol) => { close(); onOpenHistory(path, symbol); } : null} />
 
 <style>
   .ts-root {

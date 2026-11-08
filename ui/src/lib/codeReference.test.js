@@ -29,7 +29,7 @@ test('Alt-click requests references only in enhanced mode while drag and alterna
   expect(codeLinkAction(event, false, false)).toBeNull();
   expect(codeLinkAction(event, true, true)).toBeNull();
   expect(codeLinkAction({ ...event, shiftKey: true }, true, false)).toBeNull();
-  expect(codeLinkAction({ button: 0, detail: 1 }, true, false)).toBe('definition');
+  expect(codeLinkAction({ button: 0, detail: 1 }, true, false)).toBe('inspect');
 });
 
 test('an explicit clicked side wins over the previously selected side when capturing references', () => {
@@ -38,4 +38,19 @@ test('an explicit clicked side wins over the previously selected side when captu
   expect(referenceOrigin('name', 'a.ts', { line: 3, character: 1, side: 'right' }, origin, comparison).rev).toBe('head');
   expect(referenceOrigin('name', 'a.ts', { line: 3, character: 1, side: 'left' }, { ...origin, side: 'right' }, comparison).rev).toBe('base');
   expect(referenceOrigin('name', 'a.ts', { line: 3, character: 1 }, origin, comparison).rev).toBe('base');
+});
+
+ test('member names and get/set aliases are actionable while accessor and keyword syntax are not', () => {
+  for (const text of ['cache.get(key)', 'cache.set(key, value)', 'cache?.get(key)', 'const get = factory;', 'import { get as set } from "cache";', 'obj.default']) {
+    const word = text.includes('default') ? 'default' : text.includes('.set') ? 'set' : 'get';
+    expect(codeReferenceAt(text, text.indexOf(word))?.word).toBe(word);
+  }
+  for (const text of ['get size() {', 'set size(value) {', 'const value = 1;', 'return value;']) expect(codeReferenceAt(text, 1)).toBeNull();
+});
+ test('ordinary inspection cannot initiate navigation, including double-click and drag selection', () => {
+  const click = {button: 0, detail: 1};
+  expect(codeLinkAction(click, true, false)).toBe('inspect');
+  expect(codeLinkAction({...click, detail: 2}, true, false)).toBeNull();
+  expect(codeLinkAction(click, true, true)).toBeNull();
+  expect(codeLinkAction({...click, metaKey: true}, true, false)).toBe('definition');
 });

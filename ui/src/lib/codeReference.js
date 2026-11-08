@@ -1,4 +1,4 @@
-const KEYWORDS = new Set('as async await break case catch class const continue debugger declare default delete do else enum export extends false finally for from function get if implements import in instanceof interface keyof let module namespace new null of private protected public readonly return satisfies set static super switch this throw true try type typeof undefined var void while with yield'.split(' '));
+const KEYWORDS = new Set('as async await break case catch class const continue debugger declare default delete do else enum export extends false finally for from function if implements import in instanceof interface keyof let module namespace new null of private protected public readonly return satisfies static super switch this throw true try type typeof undefined var void while with yield'.split(' '));
 
 export function codeReferenceAt(text, offset, { modules = true, keywords = false } = {}) {
   if (modules) {
@@ -12,7 +12,9 @@ export function codeReferenceAt(text, offset, { modules = true, keywords = false
   }
   for (const match of text.matchAll(/[A-Za-z_$][A-Za-z0-9_$]*/g)) {
     if (offset >= match.index && offset < match.index + match[0].length) {
-      if (!keywords && KEYWORDS.has(match[0])) return null;
+      const member = /\.\s*$/.test(text.slice(0, match.index));
+      const accessor = /^(?:get|set)$/.test(match[0]) && /^\s+[A-Za-z_$][\w$]*\s*\(/.test(text.slice(match.index + match[0].length));
+      if (!keywords && !member && (KEYWORDS.has(match[0]) || accessor)) return null;
       return { word: match[0], start: match.index, end: match.index + match[0].length };
     }
   }
@@ -28,7 +30,8 @@ export function shouldFollowCodeLink(event, direct, hasSelection) {
 export function codeLinkAction(event, direct, hasSelection) {
   if (event.altKey && direct && !event.ctrlKey && !event.metaKey && !event.shiftKey
     && !event.defaultPrevented && event.button === 0 && event.detail === 1 && !hasSelection) return 'references';
-  return shouldFollowCodeLink(event, direct, hasSelection) ? 'definition' : null;
+  if (!shouldFollowCodeLink(event, direct, hasSelection)) return null;
+  return direct && !event.ctrlKey && !event.metaKey ? 'inspect' : 'definition';
 }
 
 export function referenceOrigin(symbol, path, position, origin, comparison) {

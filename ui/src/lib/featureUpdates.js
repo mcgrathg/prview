@@ -21,6 +21,16 @@ export const FEATURE_UPDATES = [
       { title: 'A version for each finished feature', body: 'Every entry shows its completion date, version timestamp, what changed and how to try it. Read progress stays in this browser.' },
     ],
   },
+  {
+    version: 1794170240049,
+    title: 'Inspect symbols without leaving the review',
+    summary: 'Ordinary code clicks now open a small symbol card. Your review stays in place until you choose where to go.',
+    howToTry: 'Click an import or symbol in a diff or source pane. Expand Definition, find Usages, or deliberately choose Open file or Open beside. Double-click and drag still select code.',
+    changes: [
+      { title: 'Context before navigation', body: 'The card shows the real definition at the clicked revision, with explicit loading, missing and ambiguous results. Escape dismisses it; stale lookups cannot navigate.' },
+      { title: 'Follow the right code', body: 'Head and original source keep their pinned revisions. Member names such as get and set are clickable, and browser Back returns to the exact caller after an explicit jump.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';

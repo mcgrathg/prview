@@ -1,6 +1,7 @@
 <script>
   import { tick, untrack } from 'svelte';
   import { createInvestigationSession } from './investigationSession.js';
+  import { symbolDestination } from './symbolContext.js';
   import { sourceLocation } from './investigationState.js';
   import { repoDefinition, repoReferences } from './api.js';
   import WorkspaceSource from './WorkspaceSource.svelte';
@@ -45,6 +46,11 @@
     if (!position || (kind === 'references' && !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(symbol))) return;
     send({type:'LOOKUP',request:{kind,symbol,path,line:position.line,character:position.character,rev:location.rev,base:location.base}});
   }
+  function openSymbol(definition,request,beside) {
+    const location = symbolDestination(definition,request);
+    if (beside) { send({type:'INSPECT',location}); send({type:'KEEP'}); }
+    else send({type:'OPEN',location});
+  }
   function promote() { if (working.preview) send({type:'OPEN',location:working.preview.location}); root({type:'PROMOTE',id:working.id}); void tick().then(()=>mainRegion?.focus()); }
   function keydown(event) {
     if (event.key==='Escape') { event.preventDefault(); event.stopPropagation(); working.preview ? closePreview() : returnReview(); }
@@ -68,9 +74,9 @@
   {:else if lookup?.matches('empty')}<p role="status">No semantic locations found.</p>{/if}
   <div class="investigation-body">
     <div class="code-columns">
-      <section class="investigation-main" bind:this={mainRegion} tabindex="-1"><h2 title={working.location.file}>{working.location.file}:{working.location.line}</h2><div class="workspace-scroll"><WorkspaceSource {repo} {headRef} pane={working.location} onNavigate={patch=>send({type:'OPEN',location:{...working.location,...patch}})} onDefinition={(symbol,path,position)=>lookupCode('definition',symbol,path,position,working.location)} onReferences={(symbol,path,position)=>lookupCode('references',symbol,path,position,working.location)} /></div></section>
-      {#each working.pinned as pinned,index}<section><h2 title={pinned.file}>Kept beside · {pinned.file}<button aria-label={`Close comparison ${pinned.file}`} onclick={()=>send({type:'UNPIN',index})}>×</button></h2><div class="workspace-scroll"><WorkspaceSource {repo} {headRef} pane={pinned} onDefinition={(symbol,path,position)=>lookupCode('definition',symbol,path,position,pinned)} onReferences={(symbol,path,position)=>lookupCode('references',symbol,path,position,pinned)} /></div></section>{/each}
-      {#if working.preview}<section class="investigation-preview" aria-label="Temporary code preview"><h2 title={working.preview.location.file}>Inspect · {working.preview.location.file}:{working.preview.location.line}</h2><div class="preview-actions"><button disabled={working.preview.trail.length<2} onclick={()=>send({type:'PREVIEW.BACK'})}>Preview back</button><button onclick={()=>send({type:'KEEP'})}>Keep beside</button><button onclick={closePreview}>Close preview</button></div><div class="workspace-scroll"><WorkspaceSource {repo} {headRef} pane={working.preview.location} onNavigate={patch=>inspect({...working.preview.location,...patch},working.preview.location.rev,working.preview.location.base)} onDefinition={(symbol,path,position)=>lookupCode('definition',symbol,path,position,working.preview.location)} onReferences={(symbol,path,position)=>lookupCode('references',symbol,path,position,working.preview.location)} /></div></section>{/if}
+      <section class="investigation-main" bind:this={mainRegion} tabindex="-1"><h2 title={working.location.file}>{working.location.file}:{working.location.line}</h2><div class="workspace-scroll"><WorkspaceSource {repo} {headRef} onOpenSymbol={openSymbol} pane={working.location} onNavigate={patch=>send({type:'OPEN',location:{...working.location,...patch}})} onDefinition={(symbol,path,position)=>lookupCode('definition',symbol,path,position,working.location)} onReferences={(symbol,path,position)=>lookupCode('references',symbol,path,position,working.location)} /></div></section>
+      {#each working.pinned as pinned,index}<section><h2 title={pinned.file}>Kept beside · {pinned.file}<button aria-label={`Close comparison ${pinned.file}`} onclick={()=>send({type:'UNPIN',index})}>×</button></h2><div class="workspace-scroll"><WorkspaceSource {repo} {headRef} onOpenSymbol={openSymbol} pane={pinned} onDefinition={(symbol,path,position)=>lookupCode('definition',symbol,path,position,pinned)} onReferences={(symbol,path,position)=>lookupCode('references',symbol,path,position,pinned)} /></div></section>{/each}
+      {#if working.preview}<section class="investigation-preview" aria-label="Temporary code preview"><h2 title={working.preview.location.file}>Inspect · {working.preview.location.file}:{working.preview.location.line}</h2><div class="preview-actions"><button disabled={working.preview.trail.length<2} onclick={()=>send({type:'PREVIEW.BACK'})}>Preview back</button><button onclick={()=>send({type:'KEEP'})}>Keep beside</button><button onclick={closePreview}>Close preview</button></div><div class="workspace-scroll"><WorkspaceSource {repo} {headRef} onOpenSymbol={openSymbol} pane={working.preview.location} onNavigate={patch=>inspect({...working.preview.location,...patch},working.preview.location.rev,working.preview.location.base)} onDefinition={(symbol,path,position)=>lookupCode('definition',symbol,path,position,working.preview.location)} onReferences={(symbol,path,position)=>lookupCode('references',symbol,path,position,working.preview.location)} /></div></section>{/if}
     </div>
     {#if result?.references || (!result?.definition && result?.candidates?.length)}
       <aside aria-label="Investigation results"><h2>{lookup.context.request.kind==='references' ? 'Semantic references' : 'Definition candidates'} · {lookup.context.request.symbol}</h2><small>{lookup.context.request.rev.slice(0,8)}</small>{#if result.coverage?.limited}<p class="partial">Partial: {result.coverage.reasons.join(', ')}</p>{/if}{#each result.references ?? result.candidates as entry}<button class="result" title={entry.path} onclick={()=>inspect(entry,lookup.context.request.rev,lookup.context.request.base)}><strong>{entry.path}:{entry.line}</strong><code>{entry.text}</code></button>{/each}</aside>

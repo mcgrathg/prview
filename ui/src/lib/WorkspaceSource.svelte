@@ -4,12 +4,15 @@
   import { langForPath } from './highlight.js';
   import { tokenizeCodeBlock } from './offThreadHighlight.js';
   import { theme } from './theme.svelte.js';
+  import SymbolCard from './SymbolCard.svelte';
+  import { symbolRequest } from './symbolContext.js';
   import CodeActionsMenu from './CodeActionsMenu.svelte';
   import { codeLinkAction } from './codeReference.js';
   import { createDefinitionHover, tokenAtPoint, columnWithin } from './wordAtPoint.js';
-  let { repo, pane, headRef = '', onDefinition, onReferences, onHistory = null, onNavigate } = $props();
+  let { repo, pane, headRef = '', onDefinition, onReferences, onHistory = null, onNavigate, onOpenSymbol = null } = $props();
   let root;
   let codeMenu;
+  let symbolCard;
   const definitionHover = createDefinitionHover(() => onDefinition, () => true);
   $effect(() => () => definitionHover.destroy());
   const machine = setup({ actors: { load: fromPromise(async ({ input, signal }) => {
@@ -51,6 +54,7 @@
   });
   function lookup(event) {
     if (!event.target.closest(".source-code")) return;
+    if (event.detail > 1 || window.getSelection()?.isCollapsed === false) symbolCard?.close();
     const action = codeLinkAction(event, true, window.getSelection()?.isCollapsed === false);
     if (!action) return;
     const token = tokenAtPoint(event.clientX, event.clientY, true);
@@ -59,7 +63,16 @@
     const character = token && code ? columnWithin(code, token) : null;
     if (!token || character == null) return;
     event.preventDefault();
-    (action === "references" ? onReferences : onDefinition)?.(token.word, pane.file, { line: Number(row.dataset.line), character }, pane);
+    const position = {line:Number(row.dataset.line), character, side:pane.side ?? 'right'};
+    if (action === 'inspect') inspectSymbol(event, {symbol:token.word,path:pane.file,position});
+    else (action === "references" ? onReferences : onDefinition)?.(token.word, pane.file, position, pane);
+  }
+  function inspectSymbol(event, target, keyboard = false) {
+    symbolCard?.inspect(event, symbolRequest(target.symbol, target.path, {...target.position, side:pane.side ?? 'right'}, {repo, headRef, ...pane, view:'source'}), keyboard);
+  }
+  function openSymbol(definition, request, beside) {
+    if (onOpenSymbol) onOpenSymbol(definition, request, beside);
+    else onDefinition?.(request.symbol, request.path, request.position, pane);
   }
   function contextMenu(event) {
     if (!event.target.closest('.source-code')) return;
@@ -69,14 +82,15 @@
     if (token && character != null) codeMenu?.open(event, { symbol: token.word, path: pane.file, position: { line: Number(row.dataset.line), character } });
   }
 </script>
-<div class="source-file" bind:this={root} onclick={lookup} oncontextmenu={contextMenu} onmousemove={event => definitionHover.onMouseMove(event, event.target.closest(".source-code"))} onmouseleave={definitionHover.onMouseLeave} title="Click to follow; Alt-click for references; right-click for code actions; drag to select code" role="region" aria-label={`Source ${pane.file}`}>
+<div class="source-file" bind:this={root} onclick={lookup} oncontextmenu={contextMenu} onmousemove={event => definitionHover.onMouseMove(event, event.target.closest(".source-code"))} onmouseleave={definitionHover.onMouseLeave} title="Click to inspect; Cmd/Ctrl-click to follow; Alt-click for references; right-click for code actions; drag to select code" role="region" aria-label={`Source ${pane.file}`}>
   {#if snapshot.matches('loading')}<p role="status">Loading pinned source…</p>
   {:else if snapshot.matches('error')}<p role="alert">{snapshot.context.error} <button onclick={() => actor.send({ type: 'LOAD', request: { repo, headRef, pane } })}>Retry source</button></p>
   {:else}
     {#each snapshot.context.lines as line, i}<div class="source-row" class:target={pane.line === i + 1} data-line={i + 1}><button class="line" aria-label={`Select line ${i + 1}`} onclick={() => onNavigate?.({ line: i + 1 })}>{i + 1}</button><span class="source-code">{#if tokens?.[i]}{#each tokens[i] as token}<span style:color={token.color}>{token.content}</span>{/each}{:else}{line}{/if}</span></div>{/each}
   {/if}
 </div>
-<CodeActionsMenu bind:this={codeMenu} {onDefinition} {onReferences} {onHistory} />
+<SymbolCard bind:this={symbolCard} context={JSON.stringify([repo,pane.file,pane.rev,pane.base,pane.side,pane.line])} onOpen={openSymbol} {onReferences} />
+<CodeActionsMenu bind:this={codeMenu} onInspect={inspectSymbol} {onDefinition} {onReferences} {onHistory} />
 <style>
   .source-file { font: 11px/1.7 var(--font-mono, monospace); min-width: max-content; }
   .source-row { white-space: pre; display: flex; }
