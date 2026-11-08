@@ -1,4 +1,12 @@
-# PR Cockpit
+# prview
+
+**Follow the code. Understand the change.**
+
+prview (pronounced “preview”) is a code browsing and PR review workspace built on [PR Cockpit](https://github.com/theolundqvist/pr-cockpit). Our fork adds review organization, dockable code panes and revision-pinned navigation.
+
+The installation and distribution instructions below document upstream PR Cockpit.
+
+## Upstream PR Cockpit documentation
 
 **An extremely fast GitHub for pull request review.** PRs open in 20 ms instead of 1.4 s ([benchmark](docs/BENCHMARKS.md)).
 
