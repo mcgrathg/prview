@@ -81,6 +81,17 @@ export const FEATURE_UPDATES = [
       { title: 'Keep the useful context', body: 'Expand outward without replacing your working file, filter changed or unchanged candidates, and save both the dependency and its importing statement as evidence. Limits and unresolved packages remain visible.' },
     ],
   },
+  {
+    version: 1794176744497,
+    title: 'A private conversation for each investigation',
+    summary: 'Optional code questions now keep independent drafts and transcripts beside each investigation.',
+    howToTry: 'Choose Ask about code in an investigation. If a provider is configured in Quick Generate, choose its model and inspect the source context before Ask. Without a provider, the panel explains setup and still saves your question.',
+    changes: [
+      { title: 'Keep context separate', body: 'Questions and completed answers stay private in this browser, scoped to the PR and investigation. Switching questions or reloading restores them; closing a request cancels it.' },
+      { title: 'Check evidence before trusting an answer', body: 'Only the selected pinned source excerpts and recent conversation go to the chosen provider on Ask. Findings and drafts are excluded. Valid citations open exact source; Save as finding keeps an editable, explicitly AI-assisted note.' },
+      { title: 'Configuration stays honest', body: 'AI requires an existing supported provider key and model. The local verification machine has no provider configured, so live answers were not verified here.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';

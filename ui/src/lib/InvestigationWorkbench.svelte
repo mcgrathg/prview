@@ -8,6 +8,7 @@
   import { repoDefinition,repoFile } from './api.js';
   import {createRepositoryResearch} from './repositoryResearch.js';
   import RepositoryNavigator from './RepositoryNavigator.svelte';
+  import InvestigationConversation from './InvestigationConversation.svelte';
   import InvestigationNotebook from './InvestigationNotebook.svelte';
   import {investigationSnapshot} from './investigationState.js';
   import WorkspaceSource from './WorkspaceSource.svelte';
@@ -16,6 +17,7 @@
   let storageError = $state(''), commandError = $state(''), titleInput, tabs, reviewButton, mainRegion, originFocus, returnFocus;
   let overlayTop = $state(145);
   let notebook, mainSource, previewSource, navigator;
+  let conversationOpen=$state(false);
   const researchLookup=createRepositoryResearch({repo,headRef});
   let pinnedSources=$state([]);
   const session = createInvestigationSession({key,storage:localStorage,initial:untrack(()=>restored),
@@ -118,7 +120,7 @@
 {#if active && working}
 <div style:top={`${overlayTop}px`} class="investigation-workbench" data-investigation-workbench data-code-overlay onkeydowncapture={captureKeydown} onkeydown={keydown} role="region" aria-label={`Investigation ${working.title}`}>
   <header><button onclick={returnReview}>← Return to review</button><input aria-label="Investigation question" bind:this={titleInput} value={working.title} oninput={event=>send({type:'TITLE',title:event.currentTarget.value},'replace')} /><span>{working.location.rev.slice(0,8)}</span><button onclick={promote}>Promote to main</button><button onclick={event=>start(event,working.preview?.location ?? working.location)}>Explore in side tab</button><button aria-label="Close current investigation" onclick={()=>closeQuestion(working.id)}>×</button></header>
-  <div class="investigation-tools"><button disabled={working.cursor===0} onclick={()=>send({type:'HISTORY.BACK'})}>Back in investigation</button><button disabled={working.cursor===working.history.length-1} onclick={()=>send({type:'HISTORY.FORWARD'})}>Forward</button><button onclick={()=>inspect(working.location,working.location.rev,working.location.base)}>Inspect source</button><button aria-pressed={working.browser.open} title="Find file · ⌘P; search repository · ⌘⇧F" onclick={()=>openBrowser('files')}>Repository</button><button onclick={()=>openBrowser('text')}>Search text</button><button onclick={()=>openBrowser('neighborhood')}>Patterns</button><span>Private workspace</span></div>
+  <div class="investigation-tools"><button disabled={working.cursor===0} onclick={()=>send({type:'HISTORY.BACK'})}>Back in investigation</button><button disabled={working.cursor===working.history.length-1} onclick={()=>send({type:'HISTORY.FORWARD'})}>Forward</button><button onclick={()=>inspect(working.location,working.location.rev,working.location.base)}>Inspect source</button><button aria-pressed={working.browser.open} title="Find file · ⌘P; search repository · ⌘⇧F" onclick={()=>openBrowser('files')}>Repository</button><button onclick={()=>openBrowser('text')}>Search text</button><button onclick={()=>openBrowser('neighborhood')}>Patterns</button><button onclick={()=>conversationOpen=!conversationOpen} aria-pressed={conversationOpen}>Ask about code</button><span>Private workspace</span></div>
   {#if lookup?.matches('loading') || lookup?.matches('retrying')}<p role="status">Looking up {lookup.context.request.symbol}… <button onclick={()=>send({type:'LOOKUP.CANCEL'})}>Cancel lookup</button></p>
   {:else if lookup?.matches('error') || lookup?.matches('unavailable')}<p role="alert">{lookup.context.error || 'This lookup is unavailable for the pinned source.'}<button onclick={()=>active.getSnapshot().children.lookup.send({type:'RETRY'})}>Retry lookup</button></p>
   {:else if lookup?.matches('empty')}<p role="status">No semantic locations found.</p>{/if}
@@ -130,6 +132,7 @@
     </div>
     {#if working.browser.open}<RepositoryNavigator bind:this={navigator} browser={working.browser} {research} {changedPaths} onSet={browserSet} onExplore={(entry,request)=>openBrowser('neighborhood',resultLocation(entry,request))} onSave={saveDiscovery} onFilter={(filter,scope)=>send({type:'BROWSER.FILTER',filter,scope},'replace')} onClose={closeBrowser} onRetry={()=>active.getSnapshot().children.research.send({type:'RETRY'})} onInspect={(entry,request)=>inspect(entry,request.rev,request.base)} onOpen={(entry,request)=>send({type:'OPEN',location:resultLocation(entry,request)})} onBeside={(entry,request)=>send({type:'PIN',location:resultLocation(entry,request)})} />{/if}
   </div>
+  {#if conversationOpen}{#key working.id}<InvestigationConversation {repo} {number} {headRef} question={{id:working.id,title:working.title}} locations={[working.location,...working.pinned,...(working.preview?[working.preview.location]:[])]} top={overlayTop} onClose={()=>conversationOpen=false} onInspect={evidence=>{inspectEvidence(evidence);conversationOpen=false;}} onFinding={(body,evidence,origin)=>{notebook?.addFinding(body,evidence,origin,draftAnchor);conversationOpen=false;}} />{/key}{/if}
   <footer>{working.preview ? 'Inspect is temporary. Keep beside pins a comparison; Promote makes it the working location.' : 'Click code for a symbol card; F12 inspects its definition; Alt-click for semantic references. Each question keeps its own history and previews.'}</footer>
 </div>
 {/if}
