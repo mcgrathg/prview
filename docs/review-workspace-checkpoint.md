@@ -36,7 +36,7 @@ bun test server/reviewViewed.test.ts server/reviewAttachments.test.ts server/tsS
 
 ## Attachment verification boundary
 
-The native upload adapter, picker/paste/drop controls, progress, cancellation, retry and revision-specific draft preservation are implemented. Mocked transport and lifecycle tests pass. The real capability endpoint reports that the current credential lacks repository write access on `storybookjs/storybook`; the composer shows that explanation and a GitHub handoff. A live upload/rendering check remains pending an authorized writable repository/PR. The prepared test image is a 79-byte synthetic 16×16 color swatch. No real attachment was uploaded. See `review-attachments.md` for the provider contract and limits.
+The real native adapter uploaded the authorized 79-byte synthetic PNG to public `mcgrathg/danger-plugin-jira-integration#3` as `mcgrathg` and returned HTTP 201. The authenticated image proxy returned the identical bytes and the Markdown preview loaded a complete 16×16 image. The unposted asset returned 404 anonymously; public-repository disclosure now acknowledges that pre-submission access can vary. No comment was submitted and private access was not tested. The browser file-chooser bridge failed before transfer, so live transport used the actual multipart endpoint and the returned Markdown was placed in the composer; focused automated coverage verifies picker/paste/drop insertion and recovery. After the disclosure edit, 13 focused tests/60 assertions and the production build passed. See `review-attachments.md` for the provider contract and limits.
 
 ## Search and initial-sync limits
 

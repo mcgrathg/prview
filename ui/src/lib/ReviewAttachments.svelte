@@ -75,7 +75,7 @@
 <div class="review-attachments" aria-label="Review attachments">
   {#if phase === 'loading'}<span role="status">Checking GitHub attachment access…</span>
   {:else if capability?.available}
-    <div class="attachment-destination">Attachments upload to <strong>{repo}</strong> ({capability.visibility.toLowerCase()}) as {capability.accountLogin}. {capability.visibility === 'PUBLIC' ? 'Anyone with the attachment URL can read it.' : 'Repository access is required to view uploaded files.'}</div>
+    <div class="attachment-destination">Attachments upload to <strong>{repo}</strong> ({capability.visibility.toLowerCase()}) as {capability.accountLogin}. {capability.visibility === 'PUBLIC' ? 'Treat attachments to this public repository as public; access before a comment is posted may vary.' : 'Repository access is required to view uploaded files.'}</div>
     <p class="attachment-note">Choosing, pasting or dropping a file uploads it to GitHub immediately, before you submit this comment.</p>
     <input bind:this={picker} type="file" accept="image/png,image/jpeg,image/gif,video/mp4,video/quicktime,video/webm" onchange={picked} hidden />
     <button class="cbtn ghost" disabled={disabled || uploading} onclick={() => picker?.click()}>Attach image or video</button>
