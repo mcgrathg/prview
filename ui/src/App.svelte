@@ -48,6 +48,7 @@
   const isShell = navigator.userAgent.includes("Electron");
   let appSidebar = $state(null);
   let releaseNotes;
+  let changelogUnread=$state(false);
   const collapsibleNavigation = new URL(location.href).searchParams.get("organize") === "1";
 
   function parseRoute(hash) {
@@ -385,6 +386,7 @@
           <span class="nav-kbd"><Kbd keys={["cmd", ","]} /></span>
         </a>
         {/if}
+        {@render featureUpdatesLink()}
       </nav>
 
       {#if quota.resources}
@@ -411,6 +413,9 @@
       {/if}
 
     {/snippet}
+    {#snippet featureUpdatesLink(compact=false)}
+      <button class="nav-item feature-updates-link" class:compact class:unread={changelogUnread} type="button" data-event="open-feature-updates" aria-label={changelogUnread ? 'What’s new, unread updates' : 'What’s new'} title={changelogUnread ? 'What’s new · Unread updates' : 'What’s new'} onclick={()=>releaseNotes?.showAll()}><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 3h12v14H4zM7 7h6M7 10h6M7 13h4"/></svg><span>What’s new</span></button>
+    {/snippet}
     {#if collapsibleNavigation}
       <CollapsibleSidebar bind:this={appSidebar} variant="app" heading="Workspace" storageKey="pr-cockpit:app-sidebar" defaultPinned={false} onSearch={openPalette} shortcuts={appNavigationShortcuts}>
         <div class="app-sidebar collapsible-nav" data-area="nav">{@render appNavigationContents()}</div>
@@ -419,6 +424,7 @@
         <a href="#/" aria-label="Inbox" title="Inbox"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 4h14v12H3zm0 6h4l1 2h4l1-2h4"/></svg></a>
         <a href="#/actions" aria-label="Actions" title="Actions"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="m8 6 5 4-5 4z"/></svg></a>
         <a href="#/settings" aria-label="Settings" title="Settings"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="3"/><path d="M10 2v3m0 10v3M2 10h3m10 0h3M4 4l2 2m8 8 2 2M4 16l2-2m8-8 2-2"/></svg></a>
+        {@render featureUpdatesLink(true)}
       {/snippet}
     {:else}
       <aside class="app-sidebar" data-area="nav">{@render appNavigationContents()}</aside>
@@ -437,7 +443,7 @@
         {#if route.section === "usage"}
           <Usage />
         {:else}
-          <Settings onOpenChangelog={() => releaseNotes?.showAll()} section={route.section} onRunSetup={() => (setupOpen = true)} />
+          <Settings {changelogUnread} onOpenChangelog={() => releaseNotes?.showAll()} section={route.section} onRunSetup={() => (setupOpen = true)} />
         {/if}
       {:else if route.name === "actions"}
         <ActionsPage repos={route.repos} workflows={route.workflows} status={route.status} repoProvided={route.repoProvided} workflowProvided={route.workflowProvided} statusProvided={route.statusProvided} />
@@ -474,13 +480,19 @@
   </div>
 {/if}
 
-<ReleaseNotes bind:this={releaseNotes} enabled={reposConfigured === true && !setupOpen && !currentSystemIssue} />
+<ReleaseNotes bind:this={releaseNotes} onUnreadChange={value=>changelogUnread=value} />
 
 {#if currentSystemIssue}
   <SystemIssueModal issue={currentSystemIssue} onRetry={retryCurrentSystemIssue} onClose={dismissSystemIssue} />
 {/if}
 
 <style>
+  .feature-updates-link{position:relative;}
+  .feature-updates-link.unread::after{content:'';position:absolute;right:8px;top:8px;width:6px;height:6px;border-radius:50%;background:var(--link);}
+  .feature-updates-link.compact{width:36px!important;min-width:36px;min-height:36px;flex:none;padding:7px;justify-content:center;}
+  .feature-updates-link.compact>span{display:none!important;}
+  .feature-updates-link.compact svg{width:18px;height:18px;}
+
   .whiteboard-recovery {
     position: relative;
     z-index: 5;

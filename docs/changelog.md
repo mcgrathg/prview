@@ -1,15 +1,16 @@
-# Changelog
+# Feature updates
 
-The release history lives in `ui/src/lib/releases.js`. Append an entry with the next integer version, an ISO calendar date, a short title and user-facing changes when a batch is ready to release. Never reuse a version. The highest entry is the running product version; Git hashes remain source identifiers rather than user-facing release numbers. Version 1 starts the history with the existing stable baseline; it does not assign fictional dates or release numbers to earlier commits. Experimental or unfinished work is not a release note.
+When a user-facing feature is complete, run `bun -e 'console.log(Date.now())'` once and append the returned fixed integer as its version in `ui/src/lib/featureUpdates.js`. Include a short explanation and a how-to-try note in the same completion commit. Versions are increasing millisecond timestamps, not counters or hashes. Never calculate a feature version at runtime or during an ordinary build. Internal checkpoints and unfinished experiments do not add feature entries.
 
-On app open/refresh, versions above this browser's last acknowledged version appear in a modal. Closing it acknowledges the current version. Settings always offers the full history and current version. The one localStorage value is browser/device-local; no cookies, backend or account sync are needed. A storage failure leaves the app usable and acknowledgement lasts for that visit.
+The latest feature timestamp identifies the product version shown in Settings and the history modal. A separate build identifier may describe a build, but never drives unread announcements. The initial baseline uses the original changelog commit's timestamp so existing history remains dated truthfully.
+
+What’s new is permanently available in app navigation and Settings. A small unread dot compares the latest feature timestamp with one browser-local last-seen value. Opening the notes acknowledges the latest entry and shows all feature notes newest first. Startup, refresh and rebuild never open the modal automatically. Read progress from the original numbered history migrates to its baseline timestamp; older tabs cannot lower newer progress. No backend or account sync is involved.
 
 | State / event | Result |
 | --- | --- |
-| Closed / app ready with unseen versions | Show only versions greater than last acknowledged |
-| Closed / Settings What's new | Show complete history |
-| New updates / View full changelog | Show complete history |
-| Either open view / Got it, Close or Escape | Store max(current version, previously acknowledged); return focus |
-| Closed / refresh after acknowledgement | Stay closed until a higher version ships |
+| Closed / open, refresh or rebuild | Stay closed; expose an unread dot if feature timestamps are newer |
+| Closed / What’s new | Open latest history; acknowledge the newest fixed feature timestamp |
+| Open / Close, Got it or Escape | Close and restore focus |
+| Either / another tab updates read progress | Refresh the unread indicator |
 
-The native modal owns focus and makes the underlying app inert while open. This feature has no polling, dependencies or connection to unfinished navigation changes.
+The native modal owns focus and makes the background inert while open. Storage failure leaves the app usable; read progress lasts for that visit.

@@ -41,7 +41,7 @@ This repository is worked on by humans and coding agents alike. Leave it easier 
 
 ## Delivery
 
-- For a user-facing release batch, append the next numbered, dated entry to `ui/src/lib/releases.js` following [the changelog convention](docs/changelog.md). Release numbers describe shipped batches; internal commits and unfinished experiments keep the current number.
+- When a user-facing feature is complete, capture `Date.now()` once and save that fixed timestamp as its version in `ui/src/lib/featureUpdates.js`, with what changed and how to try it. Include the note in the completion commit; follow [the changelog convention](docs/changelog.md). Ordinary rebuilds keep the same feature versions.
 
 - Deliver changes directly on `main`, not through pull requests. Commit only owned hunks with every imported new module; smoke boot-path changes from a tracked-source snapshot before pushing, because a shared checkout can hide missing release files.
 - New functionality is behaviorally inert and invisible until explicitly enabled, including no background work. Styling is opt-in unless it is minor polish that preserves the default appearance.

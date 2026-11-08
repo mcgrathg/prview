@@ -1,0 +1,7 @@
+# Quiet feature updates checkpoint
+
+Approved side-chat convention: each completed user-facing feature saves one fixed Date.now() timestamp, with an explanation and how to try it. The current version is the newest feature timestamp; ordinary builds have no influence on unread state. The initial baseline retains the original changelog commit's completion timestamp.
+
+The app has one notes controller. App navigation (including its collapsed rail) and Settings open the same modal. Refresh never opens it automatically. An unread dot compares the latest fixed timestamp against browser-local progress; opening notes acknowledges that timestamp and renders all history newest first. Existing numbered progress migrates to the baseline, and older tabs cannot lower later acknowledgements. Storage events update sibling-window indicators.
+
+Verification: four tests / 31 assertions cover timestamp ordering, content/try-it contracts, numerical catch-up, safe legacy migration, monotonic read progress and unavailable storage. Production build passed. In the running app, reload showed zero automatic dialogs and one visible unread navigation link; opening notes showed the current timestamp/title/try-it instructions and cleared the dot. Escape followed by reload retained zero dialogs, zero unread indicators and the same version. Screenshot prview-feature-updates-history.png is saved with the chat outputs. Native dialog keyboard/focus behavior is retained from the earlier verified changelog.
