@@ -66,9 +66,9 @@
 </script>
 
 {#snippet queueEntry(entry)}
-        <a href={fileHref?.(entry.file.filename) ?? "#"} class="queue-file" class:active={entry.file.filename === selectedPath} class:folded={entry.state === 'fold'} title={`${entry.file.filename}\n${entry.reason}`} aria-current={entry.file.filename === selectedPath ? 'true' : undefined} data-event="organization-select-file" draggable={!docking && Boolean(onOpenBeside)} onpointerdown={event => { if (docking) beginReviewFileDrag(event, { file: entry.file.filename, rev: comparison.head, base: comparison.base, view: 'diff' }); }} ondragstart={event => { event.dataTransfer.setData('application/x-prview-file', JSON.stringify({ file: entry.file.filename, rev: comparison.head, base: comparison.base, view: 'diff' })); event.dataTransfer.effectAllowed = 'copy'; }} onclick={event => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return; event.preventDefault(); select(entry.file.filename); }}>
-          <span class="rank">{entry.rank}</span><span class="path"><strong>{entry.file.name}</strong><small>{entry.file.directory}</small></span>
-          <span class="count">{entry.state === 'fold' ? 'fold' : entry.file.changes}</span>
+        <a href={fileHref?.(entry.file.filename) ?? "#"} class="queue-file" class:active={entry.file.filename === selectedPath} class:folded={entry.state === 'fold'} title={`${entry.file.filename}\nReading position ${entry.rank} of ${model.entries.length} in the current order.\n${entry.file.additions} lines added, ${entry.file.deletions} lines removed.\n${entry.reason}`} aria-label={`${entry.file.filename}, reading position ${entry.rank} of ${model.entries.length}, ${entry.file.additions} lines added, ${entry.file.deletions} lines removed${entry.state === 'fold' ? ', folded' : ''}`} aria-current={entry.file.filename === selectedPath ? 'true' : undefined} data-event="organization-select-file" draggable={!docking && Boolean(onOpenBeside)} onpointerdown={event => { if (docking) beginReviewFileDrag(event, { file: entry.file.filename, rev: comparison.head, base: comparison.base, view: 'diff' }); }} ondragstart={event => { event.dataTransfer.setData('application/x-prview-file', JSON.stringify({ file: entry.file.filename, rev: comparison.head, base: comparison.base, view: 'diff' })); event.dataTransfer.effectAllowed = 'copy'; }} onclick={event => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return; event.preventDefault(); select(entry.file.filename); }}>
+          <span class="rank" title={`Reading position ${entry.rank} of ${model.entries.length} in the current order`}>#{entry.rank}</span><span class="path"><strong>{entry.file.name}</strong><small>{entry.file.directory}</small></span>
+          <span class="file-stats" title={`${entry.file.additions} lines added, ${entry.file.deletions} lines removed (${entry.file.changes} changed lines total)`}><span class="added">+{entry.file.additions}</span> <span class="removed">−{entry.file.deletions}</span>{#if entry.state === 'fold'}<span class="fold-label">folded</span>{/if}</span>
         </a>
         {#if onOpenBeside}<button class="open-beside" aria-label={`Open ${entry.file.name} beside`} title="Open in a new pane beside the active file" onclick={() => onOpenBeside(entry.file.filename)}>Open beside</button>{/if}
 {/snippet}
@@ -186,6 +186,10 @@
   .path strong { font-weight:500; font-family:var(--font-code,monospace); }
   small { color:var(--text-dim); margin-top:4px; font-size:10px; }
   .rank, .count { color:var(--text-faint); font-size:10px; }
+  .file-stats { flex:none; text-align:right; font-size:10px; white-space:nowrap; }
+  .added { color:var(--add-text, #73c991); }
+  .removed { color:var(--del-text, #e99299); }
+  .fold-label { display:block; color:var(--text-dim); margin-top:3px; }
   .folder { display:flex; align-items:baseline; gap:6px; width:100%; padding:12px 4px 7px; color:var(--text-dim); text-align:left; }
   .folder:hover { color:var(--text); background:var(--bg-hover); }
   .folder-chevron { flex:none; }
