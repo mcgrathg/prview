@@ -1,5 +1,7 @@
 <script>
   import { createActor } from "xstate";
+  import { createReviewConfirmation } from "./reviewConfirmation.js";
+  import { reviewShortcutInfo } from "./reviewShortcutInfo.js";
   import { normalizeReviewState, buildReviewHash } from "./reviewRoute.js";
   import { beginReviewFileDrag, isReviewFileDragging } from "./reviewFileDrag.js";
   import { relatedCandidates } from "../../../shared/review-organization/relationships.ts";
@@ -1470,6 +1472,7 @@
       return;
     }
     mergeMenuOpen = false;
+    mergeShortcutScope = shortcutScope();
     forceMergeConfirm = force;
     mergeConfirm = !force;
   }
@@ -1489,7 +1492,9 @@
 
   async function confirmMergeDecision() {
     const force = forceMergeConfirm;
+    const valid = !shortcutDialogOrigin || mergeShortcutScope === shortcutScope();
     cancelMergeDecision();
+    if (!valid) return;
     await submitMerge(force);
   }
 
@@ -1538,11 +1543,61 @@
   let githubAutoMergeEnabled = $derived(Boolean(pr.autoMergeRequest));
   // one modal serves every plain yes/no confirmation, each entry carrying its own copy and action
   let confirmAction = $state(null);
+  const shortcutConfirmation = createReviewConfirmation();
+  let shortcutConfirmationSnapshot = $state(shortcutConfirmation.actor.getSnapshot());
+  const shortcutSubscription = shortcutConfirmation.actor.subscribe(next => shortcutConfirmationSnapshot = next);
+  let shortcutRequest = $derived(shortcutConfirmationSnapshot.context.pending);
+  let pickerShortcutScope = $state(null);
+  let mergeShortcutScope = null;
+  let shortcutDialogOrigin = $state(false);
+  let shortcutDialogScope = null;
+  const shortcutScope = () => JSON.stringify([repo, number, pr?.headRefOid]);
+  let previousShortcutScope = '';
+  $effect(() => {
+    const scope = shortcutScope();
+    if (scope !== previousShortcutScope) {
+      previousShortcutScope = scope;
+      untrack(() => { shortcutConfirmation.cancel(); if (pickerShortcutScope) pickerMode = null; pickerShortcutScope = null; if (shortcutDialogOrigin) { mergeConfirm = false; forceMergeConfirm = false; confirmAction = null; } });
+    }
+    if (!pickerMode) pickerShortcutScope = null;
+    if (!confirmAction && !mergeConfirm && !forceMergeConfirm) shortcutDialogOrigin = false;
+  });
+  onDestroy(() => { shortcutSubscription.unsubscribe(); shortcutConfirmation.stop(); });
+  async function confirmShortcut(title, message) {
+    if (!organizationEnabled) return true;
+    return shortcutConfirmation.request({ scope: shortcutScope(), title, message: `${repo}#${number} · ${pr?.headRefOid?.slice(0, 7)}\n${message}` });
+  }
+  function requestFromShortcut(action) {
+    shortcutDialogOrigin = organizationEnabled;
+    shortcutDialogScope = shortcutScope();
+    return action();
+  }
+  async function toggleViewedFromShortcut(file, comparison = organizationComparison) {
+    if (!organizationEnabled) { if (file) setFileViewed(file, !viewedFiles.has(file.path), comparison); return; }
+    if (!file || !canChangeViewed({ rangeKey, comparison, pullRequest: pr, snapshot: githubViewed, state: viewedSnapshot.value })) return;
+    const viewed = !viewedFiles.has(file.path);
+    if (await confirmShortcut(`${viewed ? 'Mark viewed' : 'Mark unviewed'}?`, `Save ${file.path} as ${viewed ? 'viewed' : 'unviewed'} in your GitHub progress. This persists for your account; it does not publish a review.`)) setFileViewed(file, viewed, comparison);
+  }
+  async function chooseShortcutPicker(login) {
+    const mode = pickerMode;
+    const submit = mode === 'assign' ? submitAssign : mode === 'labels' ? submitLabel : submitRequestReviewer;
+    if (organizationEnabled && pickerShortcutScope) {
+      if (pickerShortcutScope !== shortcutScope()) return;
+      const removing = (mode === 'assign' ? assignedLogins : mode === 'labels' ? appliedLabels : requestedLogins).has(login);
+      const action = mode === 'assign' ? `${removing ? 'Unassign' : 'Assign'} ${login}` : mode === 'labels' ? `${removing ? 'Remove' : 'Add'} label ${login}` : `${removing ? 'Cancel' : 'Request'} review from ${login}`;
+      if (!await confirmShortcut(`${action}?`, 'This changes the shared GitHub pull request. Other people can see the change, and GitHub may notify them.')) return;
+      const current = mode === 'assign' ? assignedLogins : mode === 'labels' ? appliedLabels : requestedLogins;
+      if (pickerMode !== mode || current.has(login) !== removing) { showFlash('This selection changed while the confirmation was open. Choose it again.'); return; }
+    }
+    await submit(login);
+  }
+
 
   function runConfirmAction() {
     const action = confirmAction;
+    const valid = !shortcutDialogOrigin || shortcutDialogScope === shortcutScope();
     confirmAction = null;
-    action.run();
+    if (valid) action?.run();
   }
 
   function requestClose() {
@@ -1554,6 +1609,7 @@
     confirmAction = {
       title: `${enable ? "Arm" : "Disarm"} the auto-merge bot for #${number}?`,
       confirmLabel: enable ? "Arm" : "Disarm",
+      message: shortcutDialogOrigin ? "This bot can push commits and merge the shared pull request automatically. Other people will see its changes." : undefined,
       run: () => submitAutoMerge(enable),
     };
   }
@@ -2271,6 +2327,7 @@
   }
 
   function openLabelPicker() {
+    pickerShortcutScope = null;
     pickerMode = "labels";
     loadRepoLabels();
   }
@@ -2994,12 +3051,12 @@
         if (e.key === "Escape") {
           mergeMenuOpen = false;
           e.preventDefault();
-        } else if (e.key === "M" && liveState && requestForceMergeShortcut()) {
+        } else if (e.key === "M" && liveState && requestFromShortcut(requestForceMergeShortcut)) {
           e.preventDefault();
         }
         return;
       }
-      if (mergeConfirm || forceMergeConfirm || confirmAction) return;
+      if (mergeConfirm || forceMergeConfirm || confirmAction || shortcutRequest) return;
       if (e.key === "Escape") {
         if (tab === "files") goToTab("conversation");
         else if (finishFileEdit()) location.hash = "#/";
@@ -3007,15 +3064,6 @@
         return;
       }
       const page = document.querySelector(".page");
-      if (e.key === "b" && !e.shiftKey) {
-        e.preventDefault();
-        if (e.repeat || !pr || !finishFileEdit()) return;
-        const item = { ...pr, repo, number };
-        if (isSetAside(item)) {
-          if (bringBack(item)) showFlash("PR brought back to the main view");
-        } else if (putAside(item)) location.hash = "#/";
-        return;
-      }
       if (e.key === "g" && !e.shiftKey) {
         const now = Date.now();
         if (now - lastG < 400) {
@@ -3035,75 +3083,15 @@
         e.preventDefault();
         return;
       }
-      if (e.key === "d") {
-        goToTab(tab === "files" ? "conversation" : "files");
-      } else if (tab === "files" && e.key === "J") {
-        selectFile(Math.min(files.length - 1, fileIndex + 1));
-      } else if (tab === "files" && e.key === "K") {
-        selectFile(Math.max(0, fileIndex - 1));
-      } else if (e.key === "j" || e.key === "ArrowDown") {
-        downPressed = true;
-        holdScrollStart(page, 1);
+      if (e.key === "j" || e.key === "ArrowDown") {
+        downPressed = true; holdScrollStart(page, 1);
       } else if (e.key === "k" || e.key === "ArrowUp") {
-        upPressed = true;
-        holdScrollStart(page, -1);
-      } else if (tab === "files" && e.key === "x") {
-        toggleExcludedFiles();
-      } else if (tab === "files" && e.key === "h") {
-        if (files[fileIndex]) openFileHistory(files[fileIndex].path);
-      } else if (e.key === "x") {
-        if (liveState && !mergeMutation && !closeMutation) requestClose();
-      } else if (tab === "files" && e.key === "c") {
-        rangeOpen = true;
-      } else if (tab === "conversation" && e.key === "c") {
-        if (!prefs.newestCommentsFirst) showTimelineThrough(timeline.length - 1);
-        focusTarget("#composer-input");
-      } else if (tab === "conversation" && e.key === "v" && canReview) {
-        focusTarget("#verdict-control");
-      } else if (e.key === "r") {
-        revealReply();
-      } else if (e.key === "e") {
-        openInlineEditor();
-      } else if (e.key === "E") {
-        openExternalEditor();
-      } else if (e.key === "m") {
-        if (mergeGate.action === "merge" && !mergeMutation) requestMerge();
-        else if (mergeGate.reason) mergeFlash.show(mergeGate.reason);
-      } else if (e.key === "M") {
-        requestForceMergeShortcut();
-      } else if (e.key === "u" && liveState) {
-        // mergeStateStatus reports BLOCKED over BEHIND, so an out-of-date branch can't be detected reliably.
-        if (!updateMutation) submitUpdateBranch();
-      } else if (e.key === "s") {
-        pickerMode = "assign";
-      } else if (e.key === "q") {
-        pickerMode = "review";
-      } else if (e.key === "l") {
-        openLabelPicker();
-      } else if (e.key === "o") {
-        const url = tab === "actions" ? actionsRunUrl : pr?.url;
-        if (url) window.open(url, "_blank", "noopener");
-      } else if (e.key === "t" && pr?.localCheckoutPath && !onLocalBranch) {
-        if (!localBranchBusy) switchToLocalBranch();
-      } else if (e.key === "p") {
-        promptOpen = true;
-      } else if (quickActions.some((a) => a.keybind === e.key)) {
-        runQuickAction(quickActions.find((a) => a.keybind === e.key));
-      } else if (autofixDef?.keybind === e.key && fixShortcutTarget) {
-        if (fixShortcutTarget === "ci") requestCiFix();
-        else if (fixShortcutTarget === "conflict") requestConflictResolution();
-        else requestAutofix();
-      } else if (keybindAgents.some((a) => a.keybind === e.key)) {
-        const def = keybindAgents.find((a) => a.keybind === e.key);
-        if (def.id === "fixer") {
-          if (!autoMergeMutation) requestAutoMerge();
-        } else if (def.id === "autofix") {
-          if (!autofixBusy && agent?.state !== "running" && !prIsGreen && !mergedState) requestAutofix();
-        } else if (!customBusy && agent?.state !== "running") {
-          requestCustomAgent(def);
-        }
+        upPressed = true; holdScrollStart(page, -1);
       } else {
-        return;
+        if (e.repeat) return;
+        const shortcuts = ['d', 'J', 'K', 'x', 'h', 'c', 'v', 'r', 'e', 'E', 'm', 'M', 'u', 's', 'q', 'l', 'o', 't', 'p', 'b', ...quickActions.map(a => a.keybind), ...keybindAgents.map(a => a.keybind)];
+        if (!shortcuts.includes(e.key) || (e.key === 'v' && tab === 'files')) return;
+        void runReviewShortcut(e.key);
       }
       e.preventDefault();
     }
@@ -3204,6 +3192,101 @@
     ...localCheckoutKeys,
     { key: "esc", label: "back" },
   ]);
+  async function runReviewShortcut(key) {
+    if (shortcutRequest || confirmAction || mergeConfirm || forceMergeConfirm || pickerMode || rangeOpen || historyOpen || telescopeOpen || quotaMergeModal || mergeMenuOpen || reviewMenuOpen) return;
+    const command = footerCommands.find(item => item.key === key);
+    if (organizationEnabled && command?.disabledReason) { showFlash(command.disabledReason); return; }
+      if (key === "Escape") {
+        if (tab === 'files') goToTab('conversation'); else if (finishFileEdit()) location.hash = '#/';
+      } else if (key === "b") {
+        if (!pr || !finishFileEdit()) return;
+        const item = { ...pr, repo, number };
+        const aside = isSetAside(item);
+        if (!await confirmShortcut(aside ? 'Bring this PR back?' : 'Set this PR aside?', 'This saves your personal Cockpit inbox state. It does not change the shared GitHub pull request.')) return;
+        if (isSetAside(item) !== aside) { showFlash('Your inbox state changed. Try the command again.'); return; }
+        if (aside) { if (bringBack(item)) showFlash('PR brought back to the main view'); }
+        else if (putAside(item)) location.hash = '#/';
+      } else if (key === "v" && tab === "files") {
+        const pane = reviewState.panes?.find(p => p.id === reviewState.active);
+        await toggleViewedFromShortcut(files.find(file => file.path === selectedPath), { head: pane?.rev ?? organizationComparison.head, base: pane?.base ?? organizationComparison.base });
+      } else if (key === "d") {
+        goToTab(tab === "files" ? "conversation" : "files");
+      } else if (tab === "files" && key === "J") {
+        selectFile(Math.min(files.length - 1, Math.max(0, files.findIndex(file => file.path === selectedPath)) + 1));
+      } else if (tab === "files" && key === "K") {
+        selectFile(Math.max(0, files.findIndex(file => file.path === selectedPath) - 1));
+      } else if (tab === "files" && key === "x") {
+        toggleExcludedFiles();
+      } else if (tab === "files" && key === "h") {
+        if (selectedPath) openFileHistory(selectedPath);
+      } else if (key === "x") {
+        if (liveState && !mergeMutation && !closeMutation) requestFromShortcut(requestClose);
+      } else if (tab === "files" && key === "c") {
+        rangeOpen = true;
+      } else if (tab === "conversation" && key === "c") {
+        if (!prefs.newestCommentsFirst) showTimelineThrough(timeline.length - 1);
+        focusTarget("#composer-input");
+      } else if (tab === "conversation" && key === "v" && canReview) {
+        focusTarget("#verdict-control");
+      } else if (key === "r") {
+        revealReply();
+      } else if (key === "e") {
+        openInlineEditor();
+      } else if (key === "E") {
+        openExternalEditor();
+      } else if (key === "m") {
+        if (mergeGate.action === "merge" && !mergeMutation) requestFromShortcut(() => requestMerge());
+        else if (mergeGate.reason) mergeFlash.show(mergeGate.reason);
+      } else if (key === "M") {
+        requestFromShortcut(requestForceMergeShortcut);
+      } else if (key === "u" && liveState) {
+        // mergeStateStatus reports BLOCKED over BEHIND, so an out-of-date branch can't be detected reliably.
+        if (!updateMutation && await confirmShortcut("Update the PR branch?", `Merge ${pr.baseRefName} into ${pr.headRefName} on GitHub. This pushes a shared commit and can trigger CI.`)) submitUpdateBranch();
+      } else if (key === "s") {
+        pickerMode = "assign";
+        pickerShortcutScope = organizationEnabled ? shortcutScope() : null;
+      } else if (key === "q") {
+        pickerMode = "review";
+        pickerShortcutScope = organizationEnabled ? shortcutScope() : null;
+      } else if (key === "l") {
+        openLabelPicker();
+        pickerShortcutScope = organizationEnabled ? shortcutScope() : null;
+      } else if (key === "o") {
+        const url = tab === "actions" ? actionsRunUrl : pr?.url;
+        if (url) window.open(url, "_blank", "noopener");
+      } else if (key === "t" && pr?.localCheckoutPath && !onLocalBranch) {
+        if (!localBranchBusy && await confirmShortcut("Switch the local branch?", `Change your local checkout to ${pr.headRefName}. This changes files on disk; it does not publish to GitHub.`)) switchToLocalBranch();
+      } else if (key === "p") {
+        promptOpen = true;
+      } else if (quickActions.some((a) => a.keybind === key)) {
+        if (await confirmShortcut("Run this PR action?", "This repository action changes GitHub labels or publishes a comment visible to other people.")) runQuickAction(quickActions.find((a) => a.keybind === key));
+      } else if (autofixDef?.keybind === key && fixShortcutTarget) {
+        if (fixShortcutTarget === "ci") requestFromShortcut(requestCiFix);
+        else if (fixShortcutTarget === "conflict") requestFromShortcut(requestConflictResolution);
+        else requestFromShortcut(requestAutofix);
+      } else if (keybindAgents.some((a) => a.keybind === key)) {
+        const def = keybindAgents.find((a) => a.keybind === key);
+        if (def.id === "fixer") {
+          if (!autoMergeMutation) requestFromShortcut(requestAutoMerge);
+        } else if (def.id === "autofix") {
+          if (!autofixBusy && agent?.state !== "running" && !prIsGreen && !mergedState) requestFromShortcut(requestAutofix);
+        } else if (!customBusy && agent?.state !== "running") {
+          requestFromShortcut(() => requestCustomAgent(def));
+        }
+      } else {
+        return;
+      }
+  }
+
+  let footerCommands = $derived((tab === 'files' ? filesKeys : tab === 'agents' || tab === 'actions' ? tabKeys : conversationKeys).flatMap(item => {
+    if (item.key === 'J / K') return [{ key: 'K', label: 'previous file' }, { key: 'J', label: 'next file' }];
+    if (item.key.includes('⌘1')) return [{ key: 'd', label: 'files' }];
+    return [{ ...item, key: item.key === 'esc' ? 'Escape' : item.key.startsWith('⇧') ? item.key.slice(1).toUpperCase() : item.key }];
+  }).map(item => {
+    const pane = reviewState.panes?.find(p => p.id === reviewState.active);
+    return { ...item, ...reviewShortcutInfo(item.key, { blocked: Boolean(pickerMode || rangeOpen || historyOpen || telescopeOpen || quotaMergeModal || mergeMenuOpen || reviewMenuOpen || shortcutRequest || confirmAction || mergeConfirm || forceMergeConfirm), tab, file: selectedPath, index: files.findIndex(f => f.path === selectedPath), count: files.length, editable: fileEditable && !workspaceEnabled, desktop: Boolean(window.cockpitShell?.openEditor), viewedAllowed: canChangeViewed({ rangeKey, comparison: { head: pane?.rev ?? organizationComparison.head, base: pane?.base ?? organizationComparison.base }, pullRequest: pr, snapshot: githubViewed, state: viewedSnapshot.value }), reply: Boolean(firstUnresolved), live: liveState, mergeReason: mergeGate.action !== 'merge' ? mergeGate.reason || 'This PR cannot currently be merged.' : mergeMutation ? 'A merge is already queued.' : '', updateBusy: Boolean(updateMutation), head: pr?.headRefName, base: pr?.baseRefName }) };
+  }));
+
 </script>
 
 <div class="page">
@@ -3655,7 +3738,7 @@
                 {repo}
                 dismissedViewed={organizationEnabled && viewedAligned ? new Set(githubViewed.files.filter(file => file.state === "DISMISSED").map(file => file.path)) : new Set()}
                 viewed={viewedFiles}
-                onToggleViewed={(file) => setFileViewed(file, !viewedFiles.has(file.path))}
+                onToggleViewed={(file, options) => options?.viaShortcut ? toggleViewedFromShortcut(file) : setFileViewed(file, !viewedFiles.has(file.path))}
                 onHoverFile={(path) => (hoveredDiffPath = path)}
                 headSha={range?.head ?? pr.headRefOid}
                 diffIdentity={displayedDiffKey}
@@ -4499,7 +4582,7 @@
         title={pickerMode === "assign" ? "Assign" : pickerMode === "labels" ? "Labels" : "Reviewers"}
         users={pickerMode === "labels" ? repoLabels : repoUsers}
         current={pickerMode === "assign" ? assignedLogins : pickerMode === "labels" ? appliedLabels : requestedLogins}
-        onPick={pickerMode === "assign" ? submitAssign : pickerMode === "labels" ? submitLabel : submitRequestReviewer}
+        onPick={chooseShortcutPicker}
         onClose={() => (pickerMode = null)}
         loading={pickerMode === "labels" && repoLabelsState === "loading" ? "Loading labels…" : null}
         error={pickerMode === "labels" && repoLabelsState === "failed" ? "Couldn't load labels. Reopen to retry." : null}
@@ -4544,6 +4627,7 @@
     {#if mergeConfirm || forceMergeConfirm}
       <MergeDecisionDialog
         {number}
+        safe={organizationEnabled && shortcutDialogOrigin}
         headRef={pr.headRefName}
         baseRef={pr.baseRefName}
         methodLabel={mergeMethodLabel}
@@ -4553,10 +4637,17 @@
       />
     {/if}
 
+    {#if shortcutRequest}
+      <ConfirmDialog title={shortcutRequest.title} confirmLabel="Yes, continue" cancelLabel="No, cancel" focusCancel={true} detail={shortcutImpact} onConfirm={() => shortcutConfirmation.confirm(shortcutScope())} onCancel={() => shortcutConfirmation.cancel()} />
+      {#snippet shortcutImpact()}<p style="white-space:pre-wrap">{shortcutRequest.message}</p>{/snippet}
+    {/if}
+
     {#if confirmAction}
       <ConfirmDialog
         title={confirmAction.title}
-        confirmLabel={confirmAction.confirmLabel}
+        confirmLabel={organizationEnabled && shortcutDialogOrigin ? `Yes, ${confirmAction.confirmLabel ?? "continue"}` : confirmAction.confirmLabel}
+        cancelLabel={organizationEnabled && shortcutDialogOrigin ? "No, cancel" : "Cancel"}
+        focusCancel={organizationEnabled && shortcutDialogOrigin}
         danger={Boolean(confirmAction.danger)}
         detail={confirmAction.message ? confirmMessage : null}
         onConfirm={runConfirmAction}
@@ -4576,7 +4667,7 @@
     {:else if copied.value}
       <div class="keybar copied-flash">{copied.value}</div>
     {:else}
-      <KeyBar keys={tab === "files" ? filesKeys : tab === "agents" || tab === "actions" ? tabKeys : conversationKeys} />
+      <KeyBar keys={organizationEnabled ? footerCommands : tab === "files" ? filesKeys : tab === "agents" || tab === "actions" ? tabKeys : conversationKeys} onActivate={organizationEnabled ? item => runReviewShortcut(item.key) : null} />
     {/if}
 
     <Telescope bind:this={telescope} reviewLocation={organizationEnabled ? workspaceEnabled ? { ...reviewState, view: 'diff' } : reviewState : null} onReviewNavigate={organizationEnabled ? navigatePane : null} {repo} headSha={organizationEnabled ? searchRevision : pr.headRefOid} definitionContext={organizationEnabled ? definitionContext : null} headRef={pr.headRefName} fileFilter={organizationEnabled ? "all" : fileFilter} changedFiles={organizationEnabled ? workspaceEnabled && searchRevision !== organizationComparison.head ? [] : comparisonFiles : files} onOpenChangedFile={openChangedFile} onOpenHistory={openFileHistory} bind:open={telescopeOpen} />
@@ -4697,7 +4788,7 @@
                 {repo}
                 dismissedViewed={organizationEnabled && viewedAligned ? new Set(githubViewed.files.filter(file => file.state === "DISMISSED").map(file => file.path)) : new Set()}
                 viewed={viewedFiles}
-                onToggleViewed={(file) => setFileViewed(file, !viewedFiles.has(file.path), { head: pane.rev ?? organizationComparison.head, base: pane.base ?? organizationComparison.base })}
+                onToggleViewed={(file, options) => options?.viaShortcut ? toggleViewedFromShortcut(file, { head: pane.rev ?? organizationComparison.head, base: pane.base ?? organizationComparison.base }) : setFileViewed(file, !viewedFiles.has(file.path), { head: pane.rev ?? organizationComparison.head, base: pane.base ?? organizationComparison.base })}
                 onHoverFile={(path) => (hoveredDiffPath = path)}
                 headSha={pane.rev ?? organizationComparison.head}
                 diffIdentity={resources.identity}

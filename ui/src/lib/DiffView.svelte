@@ -202,11 +202,11 @@
   }
 
   function onViewedKey(event) {
-    if (viewedDisabled || !onToggleViewed || !shouldToggleHoveredViewed(event, "files", hoveredFilePath)) return;
+    if (event.defaultPrevented || viewedDisabled || !onToggleViewed || !shouldToggleHoveredViewed(event, "files", hoveredFilePath)) return;
     const file = files.find((candidate) => candidate.path === hoveredFilePath);
     const head = hoveredFileSection?.querySelector(".file-head-row");
     if (!file || !head) return;
-    void keepingHeaderPlace(head, file, () => onToggleViewed(file));
+    void keepingHeaderPlace(head, file, () => onToggleViewed(file, { viaShortcut: true }));
     event.preventDefault();
   }
 

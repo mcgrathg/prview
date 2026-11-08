@@ -1,14 +1,14 @@
 <script>
   import Kbd from "./Kbd.svelte";
 
-  let { title, badge = null, confirmLabel = "Confirm", danger = false, icon = null, detail = null, onConfirm, onCancel } = $props();
+  let { title, badge = null, confirmLabel = "Confirm", cancelLabel = "Cancel", focusCancel = false, danger = false, icon = null, detail = null, onConfirm, onCancel } = $props();
 
   const titleId = $props.id();
   const detailId = `${titleId}-detail`;
 
   function manageDialogFocus(node) {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusPrimary = () => node.querySelector("[data-primary]")?.focus({ preventScroll: true });
+    const focusPrimary = () => node.querySelector(focusCancel ? "[data-cancel]" : "[data-primary]")?.focus({ preventScroll: true });
     queueMicrotask(focusPrimary);
 
     return {
@@ -75,8 +75,8 @@
     {/if}
 
     <div class="confirm-actions">
-      <button class="confirm-button secondary" type="button" aria-label="Cancel" onclick={onCancel}>
-        <span>Cancel</span>
+      <button class="confirm-button secondary" type="button" aria-label={cancelLabel} data-cancel onclick={onCancel}>
+        <span>{cancelLabel}</span>
         <Kbd keys="esc" />
       </button>
       <button class="confirm-button primary" class:danger type="button" data-event="confirm" aria-label={confirmLabel} data-primary onclick={onConfirm}>
