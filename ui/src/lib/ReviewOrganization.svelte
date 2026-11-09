@@ -5,6 +5,7 @@
   import { captureFromDiff } from '../../../shared/review-organization/capture.ts';
   import { organizationModel, emptyGraph } from '../../../shared/review-organization/model.ts';
   import { roleLabels } from '../../../shared/review-organization/analysis.ts';
+  import {explainReviewOrder} from './reviewOrderExplanation.js';
   import { beginReviewFileDrag } from './reviewFileDrag.js';
   import { relatedCandidates } from '../../../shared/review-organization/relationships.ts';
 
@@ -66,8 +67,9 @@
 </script>
 
 {#snippet queueEntry(entry)}
-        <a href={fileHref?.(entry.file.filename) ?? "#"} class="queue-file" class:active={entry.file.filename === selectedPath} class:folded={entry.state === 'fold'} title={`${entry.file.filename}\nReading position ${entry.rank} of ${model.entries.length} in the current order.\n${entry.file.additions} lines added, ${entry.file.deletions} lines removed.\n${entry.reason}`} aria-label={`${entry.file.filename}, reading position ${entry.rank} of ${model.entries.length}, ${entry.file.additions} lines added, ${entry.file.deletions} lines removed${entry.state === 'fold' ? ', folded' : ''}`} aria-current={entry.file.filename === selectedPath ? 'true' : undefined} data-event="organization-select-file" draggable={!docking && Boolean(onOpenBeside)} onpointerdown={event => { if (docking) beginReviewFileDrag(event, { file: entry.file.filename, rev: comparison.head, base: comparison.base, view: 'diff' }); }} ondragstart={event => { event.dataTransfer.setData('application/x-prview-file', JSON.stringify({ file: entry.file.filename, rev: comparison.head, base: comparison.base, view: 'diff' })); event.dataTransfer.effectAllowed = 'copy'; }} onclick={event => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return; event.preventDefault(); select(entry.file.filename); }}>
-          <span class="rank" title={`Reading position ${entry.rank} of ${model.entries.length} in the current order`}>#{entry.rank}</span><span class="path"><strong>{entry.file.name}</strong><small>{entry.file.directory}</small></span>
+        {@const orderExplanation=explainReviewOrder(entry,model.entries,controls.order).join('\n')}
+        <a href={fileHref?.(entry.file.filename) ?? "#"} class="queue-file" class:active={entry.file.filename === selectedPath} class:folded={entry.state === 'fold'} title={`${entry.file.filename}\n${orderExplanation}\n${entry.reason}`} aria-label={`${entry.file.filename}, reading position ${entry.rank} of ${model.entries.length}, ${entry.file.additions} lines added, ${entry.file.deletions} lines removed${entry.state === 'fold' ? ', folded' : ''}`} aria-current={entry.file.filename === selectedPath ? 'true' : undefined} data-event="organization-select-file" draggable={!docking && Boolean(onOpenBeside)} onpointerdown={event => { if (docking) beginReviewFileDrag(event, { file: entry.file.filename, rev: comparison.head, base: comparison.base, view: 'diff' }); }} ondragstart={event => { event.dataTransfer.setData('application/x-prview-file', JSON.stringify({ file: entry.file.filename, rev: comparison.head, base: comparison.base, view: 'diff' })); event.dataTransfer.effectAllowed = 'copy'; }} onclick={event => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return; event.preventDefault(); select(entry.file.filename); }}>
+          <span class="rank" title={orderExplanation}>#{entry.rank}</span><span class="path"><strong>{entry.file.name}</strong><small>{entry.file.directory}</small></span>
           <span class="file-stats" title={`${entry.file.additions} lines added, ${entry.file.deletions} lines removed (${entry.file.changes} changed lines total)`}><span class="added">+{entry.file.additions}</span> <span class="removed">−{entry.file.deletions}</span>{#if entry.state === 'fold'}<span class="fold-label">folded</span>{/if}</span>
         </a>
         {#if onOpenBeside}<button class="open-beside" aria-label={`Open ${entry.file.name} beside`} title="Open in a new pane beside the active file" onclick={() => onOpenBeside(entry.file.filename)}>Open beside</button>{/if}
@@ -97,7 +99,7 @@
   {#if snapshot.matches('loading')}<p class="note" role="status">Reading pinned source… Categories remain available.</p>
   {:else if snapshot.matches('error')}<div class="note error" role="alert">{controls.error} <button onclick={() => send({ type: 'RETRY' })}>Retry</button></div>
   {:else}<p class="note">{graph.coverage.parsedHeadFiles} head files parsed · {graph.edges.length} reference candidates</p>{/if}
-  {#if controls.order === 'attention'}<p class="note">Attention uses file roles, added control-flow text and change size. It is a heuristic.</p>{/if}
+  {#if controls.order === 'attention'}<p class="note">Implementation first, then tests and supporting files. Hover a rank for why.</p>{/if}
   {#if controls.order === 'flow'}
     <p class="note">Importer before imported module; changed paths only. {controls.root ? `${model.flow.reachable.size} files in the path.` : 'All components.'}
       {#if controls.root}<button onclick={() => send({ type: 'FLOW.FOLLOW' })}>Clear root</button>{/if}
@@ -114,7 +116,7 @@
       </label>
       <p class="note">{selected.file.roles.map(role => roleLabels[role]).join(' · ')} · {selected.file.language}</p>
       <ul class="note">{#each selected.file.classification as fact}<li>{fact.reason}</li>{/each}</ul>
-      <details><summary>Why this order?</summary><ul class="note">{#each selected.file.attentionReasons as reason}<li>{reason}</li>{/each}</ul></details>
+      <details><summary>Why this order?</summary><ul class="note">{#each explainReviewOrder(selected,model.entries,controls.order) as reason}<li>{reason}</li>{/each}</ul></details>
       <button class="follow" disabled={!graph.edges.some(edge => edge.from === selected.file.filename && edge.kind !== 'file_path' && !edge.typeOnly)} onclick={() => send({ type: 'FLOW.FOLLOW', path: selected.file.filename })}>Follow imports from this file</button>
       {#if related.length}<strong class="related-label">Related changed files</strong>{/if}
       {#each related as candidate (candidate.file.filename)}
@@ -185,6 +187,7 @@
   strong, small { display:block; overflow:hidden; text-overflow:ellipsis; }
   .path strong { font-weight:500; font-family:var(--font-code,monospace); }
   small { color:var(--text-dim); margin-top:4px; font-size:10px; }
+  .rank { cursor:help; text-decoration:underline dotted; text-underline-offset:3px; }
   .rank, .count { color:var(--text-faint); font-size:10px; }
   .file-stats { flex:none; text-align:right; font-size:10px; white-space:nowrap; }
   .added { color:var(--add-text, #73c991); }

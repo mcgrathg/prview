@@ -1,0 +1,11 @@
+# Why this Attention rank?
+
+The rank number and file link expose a native browser tooltip built from the current organization model. A dotted underline and help cursor make the number discoverable. File details → Why this order? uses the same formatter as a keyboard-accessible alternative. Nothing extra occupies the file list by default.
+
+Attention is a reading plan. It sorts by role group first: implementation/configuration/dependency manifests, tests, documentation, other files, then snapshots/fixtures/lockfiles. Within each group, the existing engine prioritizes added source text matching if/throw/catch/assert, then more changed lines, then file path. The tooltip identifies the actual group and signal, states when patch text is unavailable, reports additions/deletions, and explains the first differing criterion against the adjacent global rank. Comments and strings can match the text check; the order is not a risk score and does not use import-graph centrality.
+
+On the dogfood PR, relationships.ts is #1 and analysis.ts is #2: both are source files with an added control-flow-text match, so 207 changed lines precede 162. Filtering to analysis.ts retains its global #2 of 103 position and explains its 162 versus reviewViewed.ts’s 145 lines. Original, Changed lines and Import flow show their own rationale rather than Attention facts. Visibility and folder grouping do not renumber the underlying order.
+
+The implementation is derived presentation only: no new stored state, network request, dependency or change to the sorting algorithm. Tests run the real organization model, covering decisive role/signal/size/path comparisons, missing patches, overlapping fixture/configuration roles, alternate modes, filters and input immutability. Removing the control-flow comparison made the explanation test fail; it was restored before final verification.
+
+Browser checks read actual tooltip titles, verified rank clicks still open the PR diff, switched Attention/Original/Changed lines, filtered a ranked file and opened the matching File details explanation. Before/after screenshots were captured. The focused suite passes 20 tests / 174 assertions, and the tracked-source Node Vite build passes. No GitHub mutations were submitted by these checks.

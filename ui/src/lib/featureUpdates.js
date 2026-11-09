@@ -142,6 +142,16 @@ export const FEATURE_UPDATES = [
       { title: 'A marker that stays useful', body: 'The marker follows the current file, line, revision and side. Another jump replaces it; Back, reload and Unified/Split restore it. Docked panes keep independent targets. Diff addition/deletion colors and commenting controls remain visible.' },
     ],
   },
+  {
+    version: 1794200658793,
+    title: 'See why a file has its Attention rank',
+    summary: 'Hover a reading-order number for the facts behind that file’s position.',
+    howToTry: 'Hover #1, #2 or another file rank. The tooltip shows its role group, added control-flow text signal, change size and what separates it from a neighboring rank. File details → Why this order? provides the same explanation.',
+    changes: [
+      { title: 'A reading plan you can inspect', body: 'Attention puts implementation, configuration and dependency manifests before tests and supporting files. Within a group, added control-flow text comes first, followed by change size and file-path ties. The tooltip identifies text-only heuristics and unavailable patches; it does not claim a risk score.' },
+      { title: 'Correct reasons for the selected mode', body: 'Original, Changed lines and Import flow explain their own policies. Ranks still cover all changed files before filters, folder grouping or visibility rules. The sorting algorithm is unchanged.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';
