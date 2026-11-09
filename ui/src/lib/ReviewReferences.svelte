@@ -3,9 +3,9 @@
   import { onMount, untrack } from 'svelte';
   import { reviewLookupMachine } from './reviewLookupMachine.js';
   import WorkspaceSource from './WorkspaceSource.svelte';
-  import {referenceDiffLocation} from './reviewRoute.js';
+  import {referenceDiffLocation,isReviewLineTarget} from './reviewRoute.js';
   import { repoReferences,repoDefinition } from './api.js';
-  let { repo, headRef, origin, onSelect, onClose, hrefFor, comparison={},onPreviewClose,onOpenBeside,onContextReferences } = $props();
+  let { repo, headRef, origin, selection = null, onSelect, onClose, hrefFor, comparison={},onPreviewClose,onOpenBeside,onContextReferences } = $props();
   let closeButton;
   let filter = $state('');
   const actor = createActor(reviewLookupMachine, { input: { lookup: ({ request, signal }) => repoReferences(request.repo, request.rev, request.headRef, request.path, request.symbol, { line: request.line, character: request.character }, signal) } }).start();
@@ -17,6 +17,7 @@
   const preview=$derived(origin.preview ? {file:origin.preview.path,line:origin.preview.line,rev:origin.rev,base:origin.base,side:'right',view:'source'} : null);
   const changedPaths=$derived(new Set((comparison.files ?? []).flatMap(file=>[file.path,file.previousPath].filter(Boolean))));
   function change(path){return referenceDiffLocation(origin,path,comparison);}
+  function selected(entry){const target=change(entry.path);return Boolean(target && isReviewLineTarget(selection,target.file,entry.line,entry.line,target.side,{head:target.rev,base:target.base}));}
   function kind(path){const target=change(path);return target ? target.side==='left' ? 'PR change · original' : 'PR change' : changedPaths.has(path) ? 'Other revision' : 'Repository context';}
   const definitionActor=createActor(reviewLookupMachine,{input:{lookup:({request,signal})=>repoDefinition(request.repo,request.rev,request.headRef,request.path,request.symbol,{line:request.line,character:request.character},signal)}}).start();
   let definitionSnapshot=$state(definitionActor.getSnapshot());
@@ -57,10 +58,11 @@
     <div class="reference-controls"><span>{references.length} locations · includes declarations</span><input type="search" aria-label="Filter references" placeholder="Filter paths or code…" bind:value={filter} /></div>
     {#if snapshot.context.result.coverage?.limited}<p class="limited" role="status">Partial results: {snapshot.context.result.coverage.reasons.join(', ')}.</p>{/if}
     <p class="scope">Semantic matches in tracked JS/TS and Svelte scripts. Large repositories use candidate discovery; results may be incomplete. Dynamic runtime connections are outside this analysis.</p>
-    <div class="reference-results">{#each groups as [path, entries]}<section><h3><a class="reference-file" href={hrefFor(entries[0])} aria-label={`${change(path) ? 'Open PR diff for' : 'Inspect context for'} ${path}`} onclick={event=>{if(event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)return;event.preventDefault();onSelect(entries[0]);}}>{path}</a><span>{entries.length}</span><small class:pr-change={Boolean(change(path))}>{kind(path)}</small></h3>{#each entries as entry}<a href={hrefFor(entry)} title={entry.text} data-event="open-symbol-reference" data-path={entry.path} data-line={entry.line} onclick={event => { if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); onSelect(entry); }}><span class="reference-line">{entry.line}:{entry.character + 1}</span><code>{entry.text}</code>{#if entry.isDefinition}<small>Declaration</small>{/if}</a>{/each}</section>{/each}</div>
+    <div class="reference-results">{#each groups as [path, entries]}<section><h3><a class="reference-file" href={hrefFor(entries[0])} aria-label={`${change(path) ? 'Open PR diff for' : 'Inspect context for'} ${path}`} onclick={event=>{if(event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)return;event.preventDefault();onSelect(entries[0]);}}>{path}</a><span>{entries.length}</span><small class:pr-change={Boolean(change(path))}>{kind(path)}</small></h3>{#each entries as entry}<a href={hrefFor(entry)} class:selected={selected(entry)} aria-current={selected(entry) ? 'location' : undefined} title={entry.text} data-event="open-symbol-reference" data-path={entry.path} data-line={entry.line} onclick={event => { if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); onSelect(entry); }}><span class="reference-line">{entry.line}:{entry.character + 1}</span><code>{entry.text}</code>{#if entry.isDefinition}<small>Declaration</small>{/if}</a>{/each}</section>{/each}</div>
   {/if}
 </aside>
 <style>
+  a.selected{box-shadow:inset 3px 0 var(--link);background:color-mix(in srgb,var(--link) 14%,var(--panel));}a.selected .reference-line{color:var(--link);font-weight:700;}
   .reference-context{display:flex;flex-direction:column;flex:1;min-height:0;}.context-heading{display:flex;flex-direction:column;gap:7px;padding:10px 12px;border-bottom:1px solid var(--border);}.context-heading button{text-align:left;padding:0;}.context-heading strong{font:11px/1.5 monospace;overflow-wrap:anywhere;}.context-heading small{color:var(--muted);font-size:10px;}.workspace-scroll{overflow:auto;flex:1;min-height:0;}.reference-file{display:block;padding:0;border:0;background:transparent;overflow-wrap:anywhere;}h3{flex-wrap:wrap;}h3 .reference-file{flex:1;min-width:0;}h3 small{flex-basis:100%;font:9px/1.4 system-ui;}h3 .pr-change{color:var(--link);}
   .reference-panel { position: fixed; z-index: 90; right: 8px; top: 44px; bottom: 40px; width: min(420px, calc(100vw - 32px)); display: flex; flex-direction: column; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 9px; box-shadow: 0 10px 30px #0005; font-size: 12px; }
   header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); } header div { display: flex; flex-direction: column; gap: 4px; } header small, .scope { color: var(--muted); } header button { font-size: 20px; padding: 0 5px; }

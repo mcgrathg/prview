@@ -1,4 +1,5 @@
 <script>
+  import {isReviewLineTarget} from './reviewRoute.js';
   import { flushSync, onDestroy, tick, untrack } from "svelte";
   import { KeyedMap, KeyedSet } from "./keyedState.svelte.js";
   import Thread from "./Thread.svelte";
@@ -47,6 +48,7 @@
     repo,
     number = null,
     enhancedReview = false,
+    navigationLocation = null,
     showPrLink = true,
     viewedDisabled = false,
     headSha,
@@ -2259,6 +2261,7 @@
     class="line {row.type}"
     class:ws-only={row.wsOnly}
     class:comment-selected={isCommentSelected(file, row)}
+    class:navigation-target={enhancedReview && isReviewLineTarget(navigationLocation,file.path,row.oldNum,row.newNum,null,{head:headSha,base:baseSha})}
     data-new-line={row.newNum ?? undefined}
     data-old-line={row.oldNum ?? undefined}
     data-hunk-index={hunkIndex ?? undefined}
@@ -2293,6 +2296,7 @@
     class="line split-cell {row?.type ?? "empty"} {side}"
     class:ws-only={row?.wsOnly}
     class:comment-selected={row && (side === "right" || row.type === "del") && isCommentSelected(file, row)}
+    class:navigation-target={enhancedReview && row && isReviewLineTarget(navigationLocation,file.path,row.oldNum,row.newNum,side,{head:headSha,base:baseSha})}
     data-new-line={row?.newNum ?? undefined}
     data-old-line={row?.oldNum ?? undefined}
     data-hunk-index={hunkIndex ?? undefined}
@@ -3097,6 +3101,13 @@
   .line.ws-only {
     border-left: 2px solid var(--border);
   }
+  .line.navigation-target {
+    outline: 2px solid var(--link);
+    outline-offset: -2px;
+    box-shadow: inset 4px 0 var(--link);
+    background-image: linear-gradient(color-mix(in srgb, var(--link) 12%, transparent), color-mix(in srgb, var(--link) 12%, transparent));
+  }
+  .line.navigation-target .ln { color: var(--link); font-weight: 700; }
   .ln {
     flex: none;
     width: 46px;

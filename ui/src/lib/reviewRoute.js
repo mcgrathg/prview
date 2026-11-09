@@ -199,3 +199,11 @@ export function buildReviewHash(repo, number, review = {}) {
   if (state.search) params.set('search', JSON.stringify(state.search));
   return `#/pr/${repo}/${Number(number)}/files?${params}`;
 }
+
+export function isReviewLineTarget(location, path, oldLine, newLine, side = null, comparison = {}) {
+  if (!location || location.view !== 'diff' || location.file !== path || !Number.isSafeInteger(location.line) || location.line < 1) return false;
+  if (side && side !== location.side) return false;
+  if (location.rev && comparison.head && location.rev !== comparison.head) return false;
+  if (location.base && comparison.base && location.base !== comparison.base) return false;
+  return (location.side === 'left' ? oldLine : newLine) === location.line;
+}

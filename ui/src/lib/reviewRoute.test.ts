@@ -167,3 +167,20 @@ test('beside actions preserve existing panes and global comparison while pinning
  const third=reviewBesideDestination(next,{...target,file:'other.ts'});expect(third.panes.slice(0,2)).toEqual(next.panes);expect(new Set(third.panes.map(p=>p.id)).size).toBe(3);
  expect(reviewBesideDestination(state,{...target,file:'../bad'})).toEqual(state);
 });
+
+test('jump markers follow the exact file, comparison and original/head side without marking a neighboring row',async()=>{
+ const {isReviewLineTarget}=await import('./reviewRoute.js');
+ const head='a'.repeat(40),base='b'.repeat(40),location=normalizeReviewState({file:'src/change.ts',line:37,rev:head,base});
+ const comparison={head,base};
+ expect(isReviewLineTarget(location,'src/change.ts',35,37,null,comparison)).toBe(true);
+ expect(isReviewLineTarget(location,'src/change.ts',35,37,'right',comparison)).toBe(true);
+ expect(isReviewLineTarget(location,'src/change.ts',37,39,'left',comparison)).toBe(false);
+ expect(isReviewLineTarget(location,'src/change.ts',36,38,null,comparison)).toBe(false);
+ expect(isReviewLineTarget(location,'other.ts',35,37,null,comparison)).toBe(false);
+ const original={...location,side:'left'};
+ expect(isReviewLineTarget(original,'src/change.ts',37,39,'left',comparison)).toBe(true);
+ expect(isReviewLineTarget(original,'src/change.ts',37,39,'right',comparison)).toBe(false);
+ expect(isReviewLineTarget(location,'src/change.ts',35,37,null,{head:'c'.repeat(40),base})).toBe(false);
+ expect(isReviewLineTarget({...location,view:'source'},'src/change.ts',35,37,null,comparison)).toBe(false);
+ expect(isReviewLineTarget({...location,line:null},'src/change.ts',null,null,null,comparison)).toBe(false);
+});

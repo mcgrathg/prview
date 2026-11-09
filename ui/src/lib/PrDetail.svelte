@@ -3812,6 +3812,7 @@
               {:else}
               <DiffView
                 bind:this={diffView}
+                navigationLocation={reviewState}
                 {files}
                 {number}
                 enhancedReview={organizationEnabled}
@@ -4763,7 +4764,7 @@
     {/if}
 
     {#if !(investigationsEnabled && reviewState.investigation)}<Telescope bind:this={telescope} onOpenBeside={organizationEnabled ? entry=>openContextBeside({path:entry.path,line:entry.line ?? 1},{sha:searchRevision,origin:{base:organizationComparison.base}}) : null} onOpenSymbol={openResolvedSymbol} onLookupReferences={organizationEnabled ? followReferences : null} directCodeLinks={organizationEnabled} reviewLocation={organizationEnabled ? workspaceEnabled ? { ...reviewState, view: 'diff' } : reviewState : null} onReviewNavigate={organizationEnabled ? navigatePane : null} {repo} headSha={organizationEnabled ? searchRevision : pr.headRefOid} definitionContext={organizationEnabled ? definitionContext : null} headRef={pr.headRefName} fileFilter={organizationEnabled ? "all" : fileFilter} changedFiles={organizationEnabled ? workspaceEnabled && searchRevision !== organizationComparison.head ? [] : comparisonFiles : files} onOpenChangedFile={openChangedFile} onOpenHistory={openFileHistory} bind:open={telescopeOpen} />{/if}
-    {#if organizationEnabled && reviewState.references}<ReviewReferences {repo} comparison={{...organizationComparison,files:comparisonFiles}} headRef={pr.headRefName} origin={reviewState.references} onSelect={openReference} hrefFor={referenceHref} onOpenBeside={openContextBeside} onContextReferences={followContextReferences} onPreviewClose={()=>navigateReview({references:{...reviewState.references,preview:undefined}})} onClose={() => navigateReview({ references: undefined })} />{/if}
+    {#if organizationEnabled && reviewState.references}<ReviewReferences selection={activeReviewPane ?? reviewState} {repo} comparison={{...organizationComparison,files:comparisonFiles}} headRef={pr.headRefName} origin={reviewState.references} onSelect={openReference} hrefFor={referenceHref} onOpenBeside={openContextBeside} onContextReferences={followContextReferences} onPreviewClose={()=>navigateReview({references:{...reviewState.references,preview:undefined}})} onClose={() => navigateReview({ references: undefined })} />{/if}
     <FileHistory
       {repo}
       path={historyPath}
@@ -4868,6 +4869,7 @@
               {#key `${resources.identity}:${paneFile.path}`}
               <DiffView
                 bind:this={() => paneDiffViews.get(pane.id), view => bindPaneDiff(pane.id, view)}
+                navigationLocation={pane}
                 files={[paneFile]}
                 {number}
                 enhancedReview={organizationEnabled}

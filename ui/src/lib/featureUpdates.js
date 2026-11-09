@@ -133,6 +133,15 @@ export const FEATURE_UPDATES = [
       { title: 'Local editor access', body: 'VS Code is available from symbol cards and code menus, using the existing per-repository checkout setting. It opens local working-tree code, which can differ from the pinned PR revision.' },
     ],
   },
+  {
+    version: 1794199851848,
+    title: 'Find the line after a jump',
+    summary: 'PR diff jumps now mark the destination line and the matching reference entry in blue.',
+    howToTry: 'Click a reference or search result that opens a PR diff. Look for the blue outline and gutter accent on the destination line. The matching reference entry stays marked too.',
+    changes: [
+      { title: 'A marker that stays useful', body: 'The marker follows the current file, line, revision and side. Another jump replaces it; Back, reload and Unified/Split restore it. Docked panes keep independent targets. Diff addition/deletion colors and commenting controls remain visible.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';

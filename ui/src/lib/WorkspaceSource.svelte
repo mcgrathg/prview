@@ -134,7 +134,7 @@
 
   .source-file { font: 11px/1.7 var(--font-mono, monospace); min-width: max-content; }
   .source-row { white-space: pre; display: flex; }
-  .target { background: #9e6a0330; }
+  .target { background: color-mix(in srgb,var(--link) 12%,transparent); outline: 2px solid var(--link); outline-offset: -2px; box-shadow: inset 4px 0 var(--link); }
   .line { width: 46px; flex-shrink: 0; color: var(--muted); padding: 0 8px; text-align: right; user-select: none; }
   .source-code { padding-right: 20px; }
 </style>

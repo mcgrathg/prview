@@ -33,3 +33,17 @@ Running browser checks on the local foreground-only server covered:
 - Original-revision StrictArgTypes opens unchanged `core/src/csf/story.ts:166` beside the review at the base SHA, while the first diff pane and global comparison retain the PR head/base pair.
 
 The focused route/navigation/lookup/diff/symbol suite passes 71 tests / 228 assertions. The completion check passes 75 tests / 329 assertions, including feature-history invariants, and builds the tracked-source snapshot under Node Vite. Independent review found pane reveal, beside-origin and concurrent context-load gaps; those were corrected and the relevant real UI paths rechecked. No GitHub comments, reviews, Viewed changes or code edits were submitted during these checks.
+
+## Visible jump destinations
+
+PR diff destinations use the existing URL/pane location to mark the exact row with a blue outline, gutter accent and light overlay. Addition/deletion background colors remain visible. The matching rail reference exposes `aria-current="location"` and the same accent. Read-only text context uses a matching outline. No timer, animation, extra URL field or independent selection store is added.
+
+| Event | Marker |
+| --- | --- |
+| Jump to a line | Mark the matching file, line and diff side; expose the matching rail entry |
+| Another jump or file-only navigation | Replace the old target, or clear it when no line is selected |
+| Back/Forward, reload or Unified/Split | Derive the marker from the restored location |
+| Docked navigation | Update the active pane’s marker; preserve the other pane’s location |
+| Different comparison or source view | Do not mark a mismatched diff row |
+
+Browser verification covered the reported CapturedFile result at `analysis.ts:37`, a subsequent jump to40, Back and reload to37, original-side `argtypes.ts:20` in Split and Unified, and independent docked targets at13 and37. The original-side case marks only the left cell even when the right cell has the same line number. Before/after screenshots show both the code line and the selected reference. The focused route/navigation/history suite passes32 tests/246 assertions, with production and tracked-source builds. Removing the side guard failed the original/head regression; the guard was restored and the policy rechecked.
