@@ -1,5 +1,6 @@
 <script>
   import { reviewMode } from "./lib/reviewMode.js";
+  import QuickCommands from "./lib/QuickCommands.svelte";
   import CollapsibleSidebar from "./lib/CollapsibleSidebar.svelte";
   import { parseReviewRoute } from "./lib/reviewRoute.js";
   import { REVIEW_NAVIGATION_EVENT } from "./lib/reviewHistory.js";
@@ -473,6 +474,7 @@
     <SetAsideTray />
     <HistoryGesture />
     <Palette />
+    {#if collapsibleNavigation}<QuickCommands />{/if}
     {#if prefs.quickGenerateEnabled}<QuickGenerate />{/if}
     {#if prefs.askViewEnabled}<AskView {route} />{/if}
     <FlashBar />

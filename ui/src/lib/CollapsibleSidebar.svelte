@@ -45,6 +45,8 @@
     send({ type: 'CLOSE' });
     if (returnFocus) void focusTrigger();
   }
+  export async function reveal() { send({type:'OPEN'}); await tick(); }
+  export function togglePinned() { if (pinned) collapse(); else void pin(); }
   function collapse() {
     send({ type: 'COLLAPSE' });
     void focusTrigger();

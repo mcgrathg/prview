@@ -1,6 +1,6 @@
 # Open a local file in VS Code
 
-Enhanced diff headers and source toolbars have a small VS Code link. On first use, enter the repository’s absolute local checkout folder. The link then opens that local file; source views include their displayed line. The adjacent ⋯ edits the folder. This opens the working tree and does not retrieve the pinned revision, change branches, or require an extension/server endpoint. Local files and line numbers can differ from the PR.
+Enhanced diff headers keep the VS Code link in File actions (⋯); source toolbars also expose it. On first use, enter the repository’s absolute local checkout folder. The link then opens that local file; source views include their displayed line. The adjacent ⋯ edits the folder. This opens the working tree and does not retrieve the pinned revision, change branches, or require an extension/server endpoint. Local files and line numbers can differ from the PR.
 
 The URI uses [VS Code’s supported file format](https://code.visualstudio.com/docs/configure/command-line#_opening-vs-code-with-urls). Relative paths and positions are validated; path components encode spaces, Unicode, percent signs and URL delimiters. Explicit mappings remain in browser storage under `prview:vscode-root:v1:<repo>` and never enter review URLs or server requests.
 

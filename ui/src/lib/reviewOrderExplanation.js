@@ -1,6 +1,6 @@
 import {roleLabels} from '../../../shared/review-organization/analysis.ts';
 
-const names={attention:'Attention',original:'Original',volume:'Changed lines',flow:'Import flow'};
+const names={path:'File path',attention:'Attention',original:'Original',volume:'Changed lines',flow:'Import flow'};
 const groups=[
   'Implementation / configuration / dependency manifests come first.',
   'Tests follow implementation / configuration / dependency manifests.',
@@ -25,6 +25,7 @@ export function explainReviewOrder(entry, entries, order) {
   const file=entry.file;
   const lines=[`${names[order] ?? 'Review'} rank #${entry.rank} of ${entries.length} changed files (before filters/grouping).`];
   const size=`${file.changes.toLocaleString()} changed lines (+${file.additions.toLocaleString()} −${file.deletions.toLocaleString()}).`;
+  if(order==='path')return [...lines,'Alphabetical file path, folders before files; no Attention reordering.',size];
   if(order==='original')return [...lines,'Captured PR file order; no Attention reordering.',size];
   if(order==='volume')return [...lines,size,adjacentReason(entry,entries,order),'More changed lines first; file path breaks ties.'].filter(Boolean);
   if(order==='flow')return [...lines,'Importers before changed modules they import. Unrelated paths and cycles use Attention as the baseline.',size,'Changed paths only; not a complete call graph.'];

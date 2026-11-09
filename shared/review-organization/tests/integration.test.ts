@@ -19,13 +19,17 @@ test('organization keeps pure renames, empty additions and deletions in the nati
   ]);
   const model = organizationModel(adapted, emptyGraph(), defaultControls());
   expect(model.paths).toHaveLength(3);
-  expect(model.folded).toEqual(['empty.snapshot']);
+  expect(model.folded).toEqual([]);
+  expect(model.paths).toEqual(['deleted.ts','empty.snapshot','renamed.ts']);
+  expect(defaultControls().folders).toBe(true);
 });
 
 test('heavy comparison keeps every file accounted for across query, visibility precedence and overrides', () => {
   const controls = defaultControls();
   const baseline = organizationModel(capture, emptyGraph(), controls);
-  expect(baseline.counts).toEqual({ show: 18, fold: 95, hide: 0 });
+  expect(baseline.counts).toEqual({ show: 113, fold: 0, hide: 0 });
+  controls.rules.snapshot = 'fold';
+  controls.rules.fixture = 'fold';
   controls.query = 'tsconfig';
   controls.rules.configuration = 'show';
   const filtered = organizationModel(capture, emptyGraph(), controls);
@@ -90,6 +94,7 @@ test('failed source load can retry without discarding the chosen category rule',
 test('folder disclosure stays independent of visibility and survives grouping, URL restore and comparison transitions', () => {
   const actor = createActor(organizationMachine.provide({ actors: { load: fromPromise(() => new Promise(() => {})) } }), { input: { comparison } });
   actor.start();
+  actor.send({ type: 'GROUP.TOGGLE' });
   actor.send({ type: 'FOLDER.TOGGLE', directory: 'src/a' });
   expect(actor.getSnapshot().context.collapsedFolders).toEqual([]);
   actor.send({ type: 'GROUP.TOGGLE' });
@@ -113,4 +118,12 @@ test('folder disclosure stays independent of visibility and survives grouping, U
   actor.send({ type: 'COMPARISON.SET', comparison: { ...comparison, head: 'c'.repeat(40) } });
   expect(actor.getSnapshot().context.collapsedFolders).toEqual([]);
   actor.stop();
+});
+
+
+test('file-path order follows the compact tree with directories before sibling files',()=>{
+  const paths=['README.md','src.ts','src/z.ts','src/nested/b.ts','docs/a.md','src/a.ts'];
+  const native=paths.map(path=>({path,isNew:true,additions:0,deletions:0,hunks:[]}));
+  const captured=captureFromDiff('sample/project',1,comparison.base,comparison.head,native);
+  expect(organizationModel(captured,emptyGraph(),defaultControls()).paths).toEqual(['docs/a.md','src/nested/b.ts','src/a.ts','src/z.ts','README.md','src.ts']);
 });

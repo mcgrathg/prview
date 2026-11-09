@@ -7,10 +7,21 @@ export const emptyGraph = (): ReferenceGraph => ({ edges: [], diagnostics: [], c
   parsedHeadFiles: 0, resolvedImports: 0, unresolvedRelativeImports: 0, packageImports: 0, baseFilesExcluded: 0,
 } });
 
+function compareReviewPaths(a: string, b: string) {
+  const left=a.split('/'),right=b.split('/');
+  for(let i=0;i<Math.min(left.length,right.length);i++) {
+    if(left[i]===right[i])continue;
+    const leftDirectory=i<left.length-1,rightDirectory=i<right.length-1;
+    if(leftDirectory!==rightDirectory)return leftDirectory ? -1 : 1;
+    return left[i]!<right[i]! ? -1 : 1;
+  }
+  return left.length-right.length;
+}
+
 export function organizationModel(capture: Capture, graph: ReferenceGraph, controls: Controls) {
   const analyzed = analyze(capture);
   const flow = orderByImports(analyzed, graph, controls.root);
-  const ordered = controls.order === 'flow' ? flow.ordered : orderFiles(analyzed, controls.order);
+  const ordered = controls.order === 'path' ? [...analyzed].sort((a,b)=>compareReviewPaths(a.filename,b.filename)) : controls.order === 'flow' ? flow.ordered : orderFiles(analyzed, controls.order);
   const ranks = new Map(ordered.map((file, index) => [file.filename, index + 1]));
   const entries = ordered.map(file => ({ file, rank: ranks.get(file.filename)!, ...visibilityFor(file, controls.rules, controls.overrides[file.filename]) }));
   const query = controls.query.trim().toLowerCase();

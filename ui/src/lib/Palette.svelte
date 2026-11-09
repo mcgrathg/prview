@@ -1,4 +1,5 @@
 <script>
+  import { FIND_PR_EVENT, CLOSE_FINDERS_EVENT } from "./quickCommands.svelte.js";
   import { tick } from "svelte";
   import { fetchInbox, fetchPrIndex, searchPrs } from "./api.js";
   import { isPromptDialogOpen, isTypingTarget } from "./dom.js";
@@ -248,7 +249,9 @@
       e.preventDefault();
     }
     window.addEventListener("keydown", onKey, { capture: true });
-    return () => window.removeEventListener("keydown", onKey, { capture: true });
+    window.addEventListener(FIND_PR_EVENT, openPalette);
+    window.addEventListener(CLOSE_FINDERS_EVENT, close);
+    return () => { window.removeEventListener("keydown", onKey, { capture: true }); window.removeEventListener(FIND_PR_EVENT, openPalette); window.removeEventListener(CLOSE_FINDERS_EVENT, close); };
   });
 
   // the hint row names the action the held modifier will take, so ⇧ and ⌘ are discoverable

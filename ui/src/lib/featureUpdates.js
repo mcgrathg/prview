@@ -161,6 +161,18 @@ export const FEATURE_UPDATES = [
       { title: 'One normal workspace', body: 'The app navigation and PR review share the same default-mode policy. Repository investigations still require investigate=1; legacy=1 takes precedence over both older and preview flags.' },
     ],
   },
+  {
+    version: 1794250500409,
+    title: 'A calmer review, quick tools when you need them',
+    summary: 'Files now start in a compact folder tree. Advanced review tools stay close without crowding the code.',
+    howToTry: 'Open a PR’s Files tab. Use the options button beside Filter files for Attention and categories, or a file’s ⋯ menu for context and actions. Press Cmd/Ctrl+P for files and Cmd/Ctrl+Shift+P for commands; typing > in the file picker also opens commands.',
+    changes: [
+      { title: 'Familiar defaults', body: 'All changed files start visible in file-path order. Attention ranking, categories, related files and analysis details remain available in File and review options, with active choices shown beside the tree.' },
+      { title: 'Keep your place', body: 'The review toolbar and current filename stay visible as code scrolls. The file tree and docked panes scroll independently; inbox search, filters and sorting stay within reach on long lists.' },
+      { title: 'Context without clutter', body: 'File actions collect Open beside, whole-file expansion, Edit, commit context, history, GitHub and VS Code. Viewed and Unified/Split stay directly accessible. The ? button replaces the permanent shortcut footer and retains its confirmation safeguards.' },
+      { title: 'Quick switching', body: 'The compact file picker opens files or adds them beside the review. Commands change layout, reading order and panels through the existing state machines. Cmd/Ctrl+K still finds pull requests.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';

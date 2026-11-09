@@ -1,16 +1,16 @@
 import { assign, fromPromise, setup } from 'xstate';
-import { defaultRules, roleLabels, type Role, type Visibility, type VisibilityRules } from './analysis.ts';
+import { roleLabels, type Role, type Visibility, type VisibilityRules } from './analysis.ts';
 import type { Capture } from './analysis.ts';
 import type { ReferenceGraph } from './relationships.ts';
 
 export interface Comparison { repo: string; number: number; base: string; head: string }
 export const organizationKey = (comparison: Comparison) => `${comparison.repo}#${comparison.number}:${comparison.base}...${comparison.head}`;
-export type OrganizationOrder = 'attention' | 'original' | 'volume' | 'flow';
+export type OrganizationOrder = 'path' | 'attention' | 'original' | 'volume' | 'flow';
 export interface Controls {
   order: OrganizationOrder; query: string; rules: VisibilityRules; overrides: Record<string, Visibility>;
   root?: string; expanded: string[]; folders: boolean; collapsedFolders: string[];
 }
-export const defaultControls = (): Controls => ({ order: 'attention', query: '', rules: { ...defaultRules }, overrides: {}, expanded: [], folders: false, collapsedFolders: [] });
+export const defaultControls = (): Controls => ({ order: 'path', query: '', rules: {}, overrides: {}, expanded: [], folders: true, collapsedFolders: [] });
 interface Context extends Controls {
   comparison: Comparison; result: { capture: Capture; graph: ReferenceGraph } | null; error: string | null;
 }
@@ -52,7 +52,7 @@ export const organizationMachine = setup({
       target: '.loading', reenter: true,
       actions: assign(({ event }) => ({ ...defaultControls(), comparison: event.comparison, result: null, error: null })),
     },
-    'ORDER.SET': { actions: assign(({ event }) => ({ order: event.order, ...(event.order === 'flow' ? { folders: false } : {}) })) },
+    'ORDER.SET': { actions: assign(({ event }) => ({ order: event.order, folders: event.order === 'path' })) },
     'QUERY.SET': { actions: assign(({ event }) => ({ query: event.query })) },
     'ROLE.SET': {
       guard: ({ event }) => Object.hasOwn(roleLabels, event.role),
@@ -64,7 +64,7 @@ export const organizationMachine = setup({
     },
     'ROLE.RESET': { actions: assign(({ context, event }) => {
       const rules = { ...context.rules };
-      if (defaultRules[event.role]) rules[event.role] = defaultRules[event.role]; else delete rules[event.role];
+      delete rules[event.role];
       return { rules, expanded: [] };
     }) },
     'FILE.SET': { actions: assign(({ context, event }) => {

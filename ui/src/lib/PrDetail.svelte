@@ -1,4 +1,6 @@
 <script>
+  import Popover from "./Popover.svelte";
+  import { quickCommands, openQuickCommands, FIND_FILE_EVENT } from "./quickCommands.svelte.js";
   import { reviewMode } from "./reviewMode.js";
   import { createActor } from "xstate";
   import { createReviewConfirmation } from "./reviewConfirmation.js";
@@ -181,10 +183,8 @@
     if (!finishFileEdit()) return;
     if (workspaceEnabled) { workspace?.openFile(path, true, { rev: organizationComparison.head, base: organizationComparison.base, layout: reviewState.layout }); return; }
     const first = reviewState.file ?? selectedPath ?? files[0]?.path;
-    const panes = [];
-    if (first) panes.push({ id: 'p1', file: first, view: 'diff', layout: reviewState.layout, rev: organizationComparison.head, base: organizationComparison.base });
-    panes.push({ id: 'p2', file: path, view: 'diff', layout: reviewState.layout, rev: organizationComparison.head, base: organizationComparison.base });
-    navigateReview({ panes, active: 'p2', file: path, view: 'diff' });
+    const current = {...reviewState,file:first,rev:reviewState.rev ?? organizationComparison.head,base:reviewState.base ?? organizationComparison.base};
+    navigateReviewState(reviewBesideDestination(current,{file:path,view:'diff',side:'right',rev:organizationComparison.head,base:organizationComparison.base,layout:reviewState.layout}));
   }
   function workspaceChanged({ panes, active }, mode = 'push') {
     const focused = panes.find(p => p.id === active);
@@ -3366,13 +3366,46 @@
     return { ...item, ...reviewShortcutInfo(item.key, { blocked: Boolean(pickerMode || rangeOpen || historyOpen || telescopeOpen || quotaMergeModal || mergeMenuOpen || reviewMenuOpen || shortcutRequest || confirmAction || mergeConfirm || forceMergeConfirm), tab, file: selectedPath, index: files.findIndex(f => f.path === selectedPath), count: files.length, editable: fileEditable && !workspaceEnabled, desktop: Boolean(window.cockpitShell?.openEditor), viewedAllowed: canChangeViewed({ rangeKey, comparison: { head: pane?.rev ?? organizationComparison.head, base: pane?.base ?? organizationComparison.base }, pullRequest: pr, snapshot: githubViewed, state: viewedSnapshot.value }), reply: Boolean(firstUnresolved), live: liveState, mergeReason: mergeGate.action !== 'merge' ? mergeGate.reason || 'This PR cannot currently be merged.' : mergeMutation ? 'A merge is already queued.' : '', updateBusy: Boolean(updateMutation), head: pr?.headRefName, base: pr?.baseRefName }) };
   }));
 
+  function measureReviewToolbar(node) {
+    const page = node.closest('.page');
+    const measure = () => page?.style.setProperty('--review-toolbar-height', `${node.offsetHeight}px`);
+    const observer = new ResizeObserver(measure); observer.observe(node); measure();
+    return { destroy() { observer.disconnect(); page?.style.removeProperty('--review-toolbar-height'); } };
+  }
+  async function showReviewOptions() { await reviewSidebar?.reveal(); organizationPanel?.showOptions(); }
+  function findReviewFile() {
+    if (investigationsEnabled && reviewState.investigation) investigationWorkbench?.activateRepository('files');
+    else telescope?.activate('files');
+  }
+  $effect(() => {
+    if (!organizationEnabled || tab !== 'files') return;
+    const unavailable = !pr || diffState !== 'ready' ? 'Wait for the PR files to load.' : '';
+    quickCommands.review = [
+      {id:'split-diff',title:'Switch to split diff',description:'Display · active code pane',keywords:'side by side layout',disabledReason:unavailable,run:()=>setReviewLayout('split')},
+      {id:'unified-diff',title:'Switch to unified diff',description:'Display · active code pane',keywords:'inline layout',disabledReason:unavailable,run:()=>setReviewLayout('unified')},
+      ...[['path','file path'],['attention','Attention'],['original','original order'],['volume','changed lines'],['flow','import flow']].map(([order,name])=>({id:`order-${order}`,title:`Sort files by ${name}`,description:'Review order · saved in the URL',keywords:'sorting organize',disabledReason:unavailable || (order==='flow' && !organization?.graph?.edges.length ? 'No import relationships available.' : ''),run:()=>organizationPanel?.setOrder(order)})),
+      {id:'open-beside',title:'Open current file beside',description:'Workspace · keep another code pane',keywords:'split panel dock',disabledReason:unavailable || (!selectedPath ? 'Select a changed file first.' : ''),run:()=>openBeside(selectedPath)},
+      {id:'file-options',title:'Show file options and related files',description:'Categories, ranking reasons and source analysis',keywords:'filter details relationships visibility',disabledReason:unavailable,run:showReviewOptions},
+      {id:'toggle-sidebar',title:'Toggle file sidebar',description:'Layout · collapse or pin changed files',keywords:'panel tree navigation',run:()=>reviewSidebar?.togglePinned()},
+      {id:'find-file',title:'Find a file',description:'Current repository · Cmd/Ctrl+P',keywords:'search open path',run:findReviewFile},
+      {id:'search-code',title:'Search repository code',description:'Text search · Cmd/Ctrl+Shift+F',keywords:'find text usages',run:()=>investigationsEnabled && reviewState.investigation ? investigationWorkbench?.activateRepository('text') : telescope?.activate('search')},
+      ...(workspaceEnabled ? [{id:'single-view',title:'Return to single view',description:'Layout · close the docked workspace',keywords:'reset panes',run:()=>navigateReview({panes:undefined,active:undefined})}] : []),
+    ];
+    return () => { quickCommands.review = []; };
+  });
+  $effect(() => {
+    if (!organizationEnabled) return;
+    window.addEventListener(FIND_FILE_EVENT, findReviewFile);
+    return () => window.removeEventListener(FIND_FILE_EVENT, findReviewFile);
+  });
+
 </script>
 
-<div class="page">
+<div class="page" class:calm-review={organizationEnabled}>
   {#if error}
     <div class="load">{error}</div>
   {:else if pr}
-    <div class="detail-frame" class:code-first={organizationEnabled && tab === "files"} class:conversation-tab={tab === "conversation"} class:files-tab={tab === "files"}>
+    <div class="detail-frame" class:workspace-review={workspaceEnabled} class:code-first={organizationEnabled && tab === "files"} class:conversation-tab={tab === "conversation"} class:files-tab={tab === "files"}>
     <div class="detail" style="--tree-width: {treeWidth}px">
       <header class="pr-head">
         <div class="pr-head-top">
@@ -3723,14 +3756,19 @@
           Conversation {#if tab === "files"}<Kbd keys="d" />{/if}
         </a>
         <a class="tab" class:active={tab === "files"} data-event="files-tab" href="#/pr/{repo}/{number}/files">
-          Files {#if pr.changedFiles > 0}<span class="tab-count">{diffState === "ready" ? treeFiles.length : pr.changedFiles}</span>{/if} {#if tab !== "files"}<Kbd keys="d" />{/if}
+          Files {#if pr.changedFiles > 0}<span class="tab-count">{organizationEnabled ? pr.changedFiles : diffState === "ready" ? treeFiles.length : pr.changedFiles}</span>{/if} {#if tab !== "files"}<Kbd keys="d" />{/if}
         </a>
-        <a class="tab" class:active={tab === "agents"} data-event="agents-tab" href="#/pr/{repo}/{number}/agents" onclick={(event) => guardTabNavigation(event, "agents")}>
+        {#if organizationEnabled}<div class="review-tools-tabs"><Popover label="PR tools" text="Tools ⋯" closeOnAction>        <a class="tab" class:active={tab === "agents"} data-event="agents-tab" href="#/pr/{repo}/{number}/agents" onclick={(event) => guardTabNavigation(event, "agents")}>
           Agents {#if agent?.state === "running"}<span class="tab-count">1</span>{/if} {#if tab !== "agents"}<Kbd keys="⌘3" />{/if}
         </a>
         <a class="tab" class:active={tab === "actions"} data-event="actions-tab" href="#/pr/{repo}/{number}/actions" onclick={(event) => guardTabNavigation(event, "actions")}>
           Actions {#if tab !== "actions"}<Kbd keys="⌘4" />{/if}
+        </a><details><summary>Keyboard shortcuts</summary>{#each footerCommands as command}<button class="menu-action" disabled={Boolean(command.disabledReason)} title={command.disabledReason || command.help} onclick={()=>runReviewShortcut(command.key)}><kbd>{command.key}</kbd> {command.label}</button>{/each}</details></Popover></div>{:else}        <a class="tab" class:active={tab === "agents"} data-event="agents-tab" href="#/pr/{repo}/{number}/agents" onclick={(event) => guardTabNavigation(event, "agents")}>
+          Agents {#if agent?.state === "running"}<span class="tab-count">1</span>{/if} {#if tab !== "agents"}<Kbd keys="⌘3" />{/if}
         </a>
+        <a class="tab" class:active={tab === "actions"} data-event="actions-tab" href="#/pr/{repo}/{number}/actions" onclick={(event) => guardTabNavigation(event, "actions")}>
+          Actions {#if tab !== "actions"}<Kbd keys="⌘4" />{/if}
+        </a>{/if}
       </nav>
 
       {#if tab === "actions"}
@@ -3739,8 +3777,9 @@
 
       {#if tab === "files"}
         <div class="files-layout">
-          <div class="files-toolbar">
+          <div class="files-toolbar" use:measureReviewToolbar>
             <div class="toolbar-left">
+              {#if organizationEnabled}<button class="compact-pr toolbar-btn" title={`PR #${number}: ${pr.title} · open Conversation`} onclick={()=>goToTab("conversation")}>#{number}</button>{/if}
               <RangePicker
                 {commits}
                 {rangeKey}
@@ -3755,9 +3794,9 @@
             </div>
             <div class="toolbar-left">
               {#if organizationEnabled}
-                <span class="viewed-sync" role="status">{viewedSnapshot.matches('loading') ? 'Reading GitHub Viewed…' : viewedSnapshot.matches('saving') ? 'Saving Viewed…' : viewedSnapshot.matches('error') ? 'Viewed sync failed' : viewedAligned ? `GitHub · ${githubViewed.account.login} · ${viewedFiles.size}/${githubViewed.files.length} viewed` : 'Viewed belongs to a different revision'}</span>
+                <span class="viewed-sync" role="status" title={viewedAligned ? `Synced with GitHub as ${githubViewed.account.login}` : "GitHub Viewed state"}>{viewedSnapshot.matches('loading') ? 'Reading GitHub Viewed…' : viewedSnapshot.matches('saving') ? 'Saving Viewed…' : viewedSnapshot.matches('error') ? 'Viewed sync failed' : viewedAligned ? `${viewedFiles.size} / ${githubViewed.files.length} viewed` : 'Viewed belongs to a different revision'}</span>
                 {#if viewedSnapshot.matches('error')}<span class="viewed-error" role="alert" title={viewedSnapshot.context.error}>{viewedSnapshot.context.error}</span>{/if}
-                <button class="toolbar-btn" disabled={viewedSnapshot.matches('saving') || viewedSnapshot.matches('loading')} onclick={() => viewedActor.send({ type: 'REFRESH' })}>Refresh Viewed</button>
+
               {/if}
               {#if !organizationEnabled && files.length && diffState === "ready"}
                 <button class="toolbar-btn shortcut-action" onclick={toggleExcludedFiles}>
@@ -3766,21 +3805,30 @@
               {/if}
               {#if organizationEnabled}
                 <div class="diff-layout-options" aria-label="Diff layout"><button class="toolbar-btn" aria-pressed={reviewState.layout === 'unified'} onclick={() => setReviewLayout('unified')}>Unified</button><button class="toolbar-btn" aria-pressed={reviewState.layout === 'split'} onclick={() => setReviewLayout('split')}>Split</button></div>
-                <button class="toolbar-btn" onclick={() => openBeside(selectedPath ?? files[0]?.path)} disabled={!files.length}>Open beside</button>
-                {#if workspaceEnabled}<a class="toolbar-btn" href={`https://github.com/${repo}/pull/${number}`} target="_blank" rel="noopener noreferrer">GitHub PR</a><button class="toolbar-btn" onclick={() => workspace?.addView("files")}>Files pane</button><button class="toolbar-btn" onclick={() => workspace?.addView("related")}>Related pane</button><button class="toolbar-btn" onclick={() => workspace?.resetLayout()}>Reset layout</button><button class="toolbar-btn" onclick={() => navigateReview({ panes: undefined, active: undefined })}>Single view</button>{/if}
+                <button class="toolbar-btn quick-switch" title="Find files · Cmd/Ctrl+P. Commands · Cmd/Ctrl+Shift+P" onclick={findReviewFile}><span class="quick-switch-label">Quick switch</span> <span class="quick-switch-key">⌘P</span></button>
+                <button class="toolbar-btn review-submit" disabled={!canReview} title={canReview ? 'Open the native review composer without submitting' : 'Review submission is not available for this PR'} onclick={()=>{if(goToTab('conversation'))requestAnimationFrame(()=>focusWhenReady('#verdict-control'));}}>Review changes</button>
+                <Popover label="Review tools" text="⋯" closeOnAction>
+                  {#if workspaceEnabled}<a class="menu-action" href={`#/pr/${repo}/${number}`} onclick={event=>guardTabNavigation(event,'conversation')}>Conversation</a><a class="menu-action" href={`#/pr/${repo}/${number}/agents`} onclick={event=>guardTabNavigation(event,'agents')}>PR agents</a><a class="menu-action" href={`#/pr/${repo}/${number}/actions`} onclick={event=>guardTabNavigation(event,'actions')}>PR actions</a><hr/>{/if}
+                  <button class="menu-action" onclick={()=>openQuickCommands()}>Commands <small>⌘⇧P</small></button>
+                  <button class="menu-action" onclick={() => openBeside(selectedPath ?? files[0]?.path)} disabled={!files.length}>Open beside</button>
+                  <button class="menu-action" disabled={viewedSnapshot.matches('saving') || viewedSnapshot.matches('loading')} onclick={()=>viewedActor.send({type:'REFRESH'})}>Refresh Viewed from GitHub</button>
+                  <a class="menu-action" href={`https://github.com/${repo}/pull/${number}`} target="_blank" rel="noopener noreferrer">Open PR on GitHub ↗</a>
+                  {#if workspaceEnabled}<hr/><button class="menu-action" onclick={()=>workspace?.addView('files')}>Add files pane</button><button class="menu-action" onclick={()=>workspace?.addView('related')}>Add related pane</button><button class="menu-action" onclick={()=>workspace?.resetLayout()}>Reset pane layout</button><button class="menu-action" onclick={()=>navigateReview({panes:undefined,active:undefined})}>Single view</button>{/if}
+                </Popover>
+                <Popover label="Keyboard shortcuts" text="?" closeOnAction>{#each footerCommands as command}<button class="menu-action" disabled={Boolean(command.disabledReason)} title={command.disabledReason || command.help} onclick={()=>runReviewShortcut(command.key)}><kbd>{command.key}</kbd> {command.label}</button>{/each}</Popover>
               {:else}<button class="toolbar-btn" onclick={toggleDiffLayout}>{prefs.diffLayout === "split" ? "unified" : "side by side"}</button>{/if}
             </div>
           </div>
           {#if investigationsEnabled && diffState === 'ready'}{#key `${repo}#${number}`}<div class="investigation-slot"><InvestigationWorkbench onReviewDefinition={(definition,request)=>{if(!finishFileEdit())return;restoredLocation='';navigateReviewState(reviewDefinitionDestination({...reviewState,investigation:undefined},definition,request,{...organizationComparison,files:comparisonFiles}));}} bind:this={investigationWorkbench} changedPaths={comparisonFiles.map(file=>file.path)} currentHead={pr.headRefOid} currentBase={pr.baseRefOid} pendingReviewsEnabled={prefs.pendingReviewsEnabled} {pendingReview} {pendingReviewStale} onSubmitDraft={submitFindingDraft} {repo} {number} headRef={pr.headRefName} review={reviewState} restored={reviewLocation?.investigation} onRoute={(investigation,mode)=>navigateReview({investigation},mode)} /></div>{/key}{/if}
           {#snippet sidebarContents()}
             {#if organizationEnabled && diffState === "ready" && comparisonFiles.length}
-              <ReviewOrganization bind:this={organizationPanel} comparison={organizationComparison} nativeFiles={comparisonFiles} {selectedPath} onChange={receiveOrganization} onSelect={path => { openChangedFile(path); reviewSidebar?.dismiss(); }} onOpenBeside={path => { openBeside(path); reviewSidebar?.dismiss(); }} docking={workspaceEnabled} fileHref={path => buildReviewHash(repo, number, { ...reviewState, file: path, view: "diff", line: null, rev: organizationComparison.head, base: organizationComparison.base })} restoredControls={reviewState.controls} onControlsChange={(controls, mode) => navigateReview({ controls }, mode)} />
+              <ReviewOrganization bind:this={organizationPanel} comparison={organizationComparison} nativeFiles={comparisonFiles} {selectedPath} onChange={receiveOrganization} onSelect={path => { openChangedFile(path); reviewSidebar?.dismiss(); }} onOpenBeside={path => { openBeside(path); reviewSidebar?.dismiss(); }} docking={workspaceEnabled} fileHref={path => buildReviewHash(repo, number, { ...reviewState, file: path, view: "diff", line: null, rev: organizationComparison.head, base: organizationComparison.base })} restoredControls={reviewState.controls} onControlsChange={(controls, mode, file) => navigateReview({controls,...(!workspaceEnabled && file !== undefined ? {file,...(file !== reviewState.file ? {line:null} : {})} : {})}, mode)} />
             {:else}
               <FileTree files={treeFiles} {selectedPath} hoveredPath={hoveredDiffPath} onSelect={selectFileByPath} onContextMenu={prefs.reviewFileMenuEnabled ? openFileMenu : null} />
             {/if}
           {/snippet}
           {#if organizationEnabled}
-            <ReviewSidebar bind:this={reviewSidebar} modalOpen={Boolean((investigationsEnabled && reviewState.investigation) || pickerMode || rangeOpen || historyOpen || telescopeOpen || shortcutRequest || confirmAction || mergeConfirm || forceMergeConfirm || promptOpen)} count={diffState === "ready" ? treeFiles.length : pr.changedFiles} onSearch={() => investigationsEnabled && reviewState.investigation ? investigationWorkbench?.activateRepository('files') : telescope?.activate('files')}>{@render sidebarContents()}</ReviewSidebar>
+            <ReviewSidebar bind:this={reviewSidebar} modalOpen={Boolean((investigationsEnabled && reviewState.investigation) || pickerMode || rangeOpen || historyOpen || telescopeOpen || shortcutRequest || confirmAction || mergeConfirm || forceMergeConfirm || promptOpen)} count={diffState === "ready" ? comparisonFiles.length : pr.changedFiles} onSearch={() => investigationsEnabled && reviewState.investigation ? investigationWorkbench?.activateRepository('files') : telescope?.activate('files')}>{@render sidebarContents()}</ReviewSidebar>
           {:else}
           <aside class="tree-pane">
             <div class="file-nav-head">
@@ -3815,7 +3863,9 @@
                 navigationLocation={reviewState}
                 {files}
                 {number}
+                showPrLink={!organizationEnabled}
                 enhancedReview={organizationEnabled}
+                onOpenBeside={organizationEnabled ? path=>openBeside(path) : null}
                 viewedDisabled={organizationEnabled && (!viewedSnapshot.matches("ready") || !viewedAligned || rangeKey !== "all")}
                 onWarmFile={warmDiffFile}
                 onReleaseFile={releaseDiffFile}
@@ -4760,7 +4810,7 @@
     {:else if copied.value}
       <div class="keybar copied-flash">{copied.value}</div>
     {:else}
-      <KeyBar keys={organizationEnabled ? footerCommands : tab === "files" ? filesKeys : tab === "agents" || tab === "actions" ? tabKeys : conversationKeys} onActivate={organizationEnabled ? item => runReviewShortcut(item.key) : null} />
+      {#if !organizationEnabled}<KeyBar keys={organizationEnabled ? footerCommands : tab === "files" ? filesKeys : tab === "agents" || tab === "actions" ? tabKeys : conversationKeys} onActivate={organizationEnabled ? item => runReviewShortcut(item.key) : null} />{/if}
     {/if}
 
     {#if !(investigationsEnabled && reviewState.investigation)}<Telescope bind:this={telescope} onOpenBeside={organizationEnabled ? entry=>openContextBeside({path:entry.path,line:entry.line ?? 1},{sha:searchRevision,origin:{base:organizationComparison.base}}) : null} onOpenSymbol={openResolvedSymbol} onLookupReferences={organizationEnabled ? followReferences : null} directCodeLinks={organizationEnabled} reviewLocation={organizationEnabled ? workspaceEnabled ? { ...reviewState, view: 'diff' } : reviewState : null} onReviewNavigate={organizationEnabled ? navigatePane : null} {repo} headSha={organizationEnabled ? searchRevision : pr.headRefOid} definitionContext={organizationEnabled ? definitionContext : null} headRef={pr.headRefName} fileFilter={organizationEnabled ? "all" : fileFilter} changedFiles={organizationEnabled ? workspaceEnabled && searchRevision !== organizationComparison.head ? [] : comparisonFiles : files} onOpenChangedFile={openChangedFile} onOpenHistory={openFileHistory} bind:open={telescopeOpen} />{/if}
@@ -4844,13 +4894,13 @@
   {@const paneFile = comparisonFiles.find(file => file.path === pane.file)}
   <section class="workspace-pane" data-pane-id={pane.id} aria-label={pane.view === 'files' ? 'Changed files view' : pane.view === 'related' ? 'Related files view' : pane.file ?? 'Review pane'} onfocusin={() => workspace?.focusPane(pane.id)} onpointerdown={() => workspace?.focusPane(pane.id)}>
     <div class="pane-toolbar">
-      {#if !['files', 'related'].includes(pane.view)}<button aria-pressed={pane.view === 'diff'} onclick={() => workspace?.updatePane(pane.id, { view: 'diff' })}>Diff</button><button aria-pressed={pane.view === 'source'} onclick={() => workspace?.updatePane(pane.id, { view: 'source' })}>Source</button>
-      <button aria-pressed={pane.layout === 'unified'} onclick={() => workspace?.updatePane(pane.id, { layout: 'unified' })}>Unified</button>
-      <button aria-pressed={pane.layout === 'split'} onclick={() => workspace?.updatePane(pane.id, { layout: 'split' })}>Split</button>
-      <button onclick={() => workspace?.openFile(pane.file, true)}>Open beside</button>{/if}
-      <details><summary>Move</summary><div class="pane-moves"><button onclick={() => workspace?.movePane(pane.id, 'left')}>Move left</button><button onclick={() => workspace?.movePane(pane.id, 'right')}>Move right</button><button onclick={() => workspace?.movePane(pane.id, 'top')}>Move above</button><button onclick={() => workspace?.movePane(pane.id, 'bottom')}>Move below</button><button onclick={() => workspace?.movePane(pane.id, 'center')}>Group as tab</button></div></details>
-      {#if pane.view==='source' && pane.file}<OpenInVscode {repo} path={pane.file} line={pane.line ?? 1} />{/if}
-      <button aria-label={`Close ${pane.view === 'files' ? 'files view' : pane.view === 'related' ? 'related view' : pane.file ?? 'pane'}`} onclick={() => workspace?.closePane(pane.id)}>×</button>
+      <span class="pane-view-label">{pane.view === 'diff' ? 'PR diff' : pane.view === 'source' ? 'Source context' : pane.view === 'files' ? 'Changed files' : 'Related files'}</span>
+      <Popover label={`Pane options for ${pane.file ?? pane.view}`} text="⋯" closeOnAction>
+        {#if !['files','related'].includes(pane.view)}<button class="menu-action" onclick={()=>workspace?.updatePane(pane.id,{view:'diff'})}>Show diff</button><button class="menu-action" onclick={()=>workspace?.updatePane(pane.id,{view:'source'})}>Show source</button><button class="menu-action" onclick={()=>workspace?.openFile(pane.file,true)}>Open beside</button><hr/>{/if}
+        <button class="menu-action" onclick={()=>workspace?.movePane(pane.id,'left')}>Move left</button><button class="menu-action" onclick={()=>workspace?.movePane(pane.id,'right')}>Move right</button><button class="menu-action" onclick={()=>workspace?.movePane(pane.id,'top')}>Move above</button><button class="menu-action" onclick={()=>workspace?.movePane(pane.id,'bottom')}>Move below</button><button class="menu-action" onclick={()=>workspace?.movePane(pane.id,'center')}>Group as tab</button>
+        {#if pane.view==='source' && pane.file}<hr/><OpenInVscode {repo} path={pane.file} line={pane.line ?? 1}/>{/if}
+        <hr/><button class="menu-action" onclick={()=>workspace?.closePane(pane.id)}>Close pane</button>
+      </Popover>
     </div>
     <div class="workspace-scroll">
       {#if pane.view === 'source'}
@@ -4873,6 +4923,7 @@
                 files={[paneFile]}
                 {number}
                 enhancedReview={organizationEnabled}
+                onOpenBeside={organizationEnabled ? path=>openBeside(path) : null}
                 showPrLink={false}
                 viewedDisabled={!viewedSnapshot.matches("ready") || !viewedAligned || (pane.rev && pane.rev !== pr.headRefOid) || (pane.base && pane.base !== pr.baseRefOid)}
                 onWarmFile={resources.warm}
@@ -4943,8 +4994,8 @@
   .workspace-scroll { overflow: auto; min-height: 0; flex: 1; padding: 4px; }
   .pane-toolbar { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 6px; border-bottom: 1px solid var(--border); align-items: center; font-size: 11px; }
   .pane-toolbar button { padding: 3px 6px; white-space: nowrap; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
-  .pane-toolbar [aria-pressed="true"], .diff-layout-options [aria-pressed="true"] { background: var(--surface-hover, #263f58); color: var(--text); }
-  .pane-moves { position: absolute; z-index: 5; background: var(--surface, #20262e); padding: 8px; display: grid; }
+  .diff-layout-options [aria-pressed="true"] { background: var(--surface-hover, #263f58); color: var(--text); }
+  .pane-view-label{flex:1;color:var(--text-dim);font-size:10px;}
   .diff-layout-options { display: flex; gap: 2px; }
 
   .page {
@@ -8019,4 +8070,17 @@
   @media (max-width:940px) {
     .files-layout:has(> .investigation-slot):has(> :global(.review-sidebar[data-pinned='true'])) > .diff-pane { grid-row:4; }
   }
+  .code-first.workspace-review .pr-head,.detail-frame.code-first.workspace-review .tabs{display:none;}
+  .code-first .files-toolbar .toolbar-btn{white-space:nowrap;}
+  .calm-review{padding-inline:14px;padding-bottom:0;scroll-padding-top:calc(var(--review-toolbar-height,48px) + 44px);}
+  .calm-review .code-first > .detail{padding-top:8px;padding-bottom:16px;}
+  .code-first .pr-head{width:100%;margin-left:0;padding:6px 8px;}.detail-frame.code-first.files-tab .tabs{width:100%;margin-left:0;gap:8px;align-items:center;padding:3px 7px;margin-bottom:7px;}
+  .code-first .tabs > .tab{border-radius:0;border:0;background:transparent;padding:8px 7px;font-size:12px;}.code-first .tabs > .tab.active{border-bottom:2px solid var(--link);}.review-tools-tabs{margin-left:auto;}
+  .code-first .files-toolbar{position:sticky;top:0;z-index:22;min-height:46px;margin:0 0 10px;padding:5px 7px;background:var(--bg);gap:8px;}.code-first .files-toolbar .toolbar-left{gap:8px;flex-wrap:nowrap;}.code-first .files-toolbar .toolbar-btn{font-size:11px;padding:5px 7px;}.compact-pr{font-size:11px;color:var(--text-dim);}.quick-switch span{font-size:9px;color:var(--text-dim);border:1px solid var(--border-soft);border-radius:3px;padding:1px 3px;}.code-first .files-toolbar .review-submit{background:var(--ready);color:var(--bg);border-radius:5px;}.review-submit:disabled{opacity:.45;}.code-first .viewed-sync{font-size:10px;white-space:nowrap;}.code-first .files-layout{grid-template-columns:min(var(--tree-width),40%) 6px minmax(0,1fr);}
+  .code-first .files-layout > :global(.review-sidebar){top:calc(var(--review-toolbar-height,48px) + 7px);max-height:calc(var(--general-height) - var(--review-toolbar-height,48px) - 15px);}
+  .code-first :global(.review-sidebar:not(.app) .sidebar-panel){height:calc(var(--general-height) - var(--review-toolbar-height,48px) - 15px);max-height:calc(var(--general-height) - var(--review-toolbar-height,48px) - 15px);}
+  .code-first :global(.review-sidebar:not(.app) .sidebar-body){display:flex;flex:1;overflow:hidden;}.code-first .diff-pane{padding-left:12px;}.workspace-scroll{--review-toolbar-height:0px;}
+  @media(max-width:940px){.code-first .files-layout{grid-template-columns:48px 0 minmax(0,1fr);}.code-first .files-toolbar{grid-column:1/-1;flex-wrap:wrap;}.code-first .files-layout:has(> :global(.review-sidebar[data-pinned='true'])){grid-template-columns:min(240px,38%) 4px minmax(0,1fr);}.code-first .files-layout > :global(.review-sidebar.pinned:not(.app)){position:sticky;grid-column:1;grid-row:2;margin-bottom:0;}.code-first .files-layout:has(> :global(.review-sidebar[data-pinned='true'])) > .diff-pane{grid-column:3;grid-row:2;}.code-first .files-layout .diff-pane{width:auto;margin-inline:0;}.code-first .files-layout .tree-resizer{display:block;}}
+  @media(max-width:650px){.code-first .files-toolbar .quick-switch .quick-switch-key{display:inline;}.code-first .files-toolbar .viewed-error{max-width:90px;}.code-first .files-toolbar > .toolbar-left{flex-shrink:0;max-width:100%;flex-wrap:wrap;}.code-first .files-toolbar .quick-switch .quick-switch-label,.code-first .viewed-sync{display:none;}.code-first .files-toolbar .toolbar-left{gap:3px;}.code-first .files-toolbar .toolbar-btn{padding:5px 4px;font-size:10px;}.code-first .files-layout:has(> :global(.review-sidebar[data-pinned='true'])){grid-template-columns:min(180px,38%) 4px minmax(0,1fr);}.calm-review{padding-inline:5px;}}
+
 </style>

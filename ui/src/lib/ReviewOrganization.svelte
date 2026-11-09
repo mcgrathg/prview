@@ -1,4 +1,6 @@
 <script>
+  import FileTree from './FileTree.svelte';
+  import Popover from './Popover.svelte';
   import { onDestroy, tick, untrack } from 'svelte';
   import { createActor } from 'xstate';
   import { organizationMachine, organizationKey } from '../../../shared/review-organization/machine.ts';
@@ -10,6 +12,9 @@
   import { relatedCandidates } from '../../../shared/review-organization/relationships.ts';
 
   let { comparison, nativeFiles, selectedPath, onChange, onSelect, onOpenBeside = null, docking = false, fileHref = null, onControlsChange = null, restoredControls = null } = $props();
+  let optionsPanel;
+  export function showOptions() { optionsPanel?.show(); }
+  export function setOrder(order) { send({type:'ORDER.SET', order}); }
   const actor = createActor(organizationMachine, { input: { comparison: untrack(() => comparison) } });
   let snapshot = $state(actor.getSnapshot());
   const subscription = actor.subscribe(next => snapshot = next);
@@ -34,6 +39,8 @@
   })).filter(role => role.count));
   let shownEntries = $derived(model.visible.filter(entry => entry.state !== 'fold'));
   let foldedEntries = $derived(model.visible.filter(entry => entry.state === 'fold'));
+  let treeFiles = $derived(shownEntries.map(entry => nativeFiles.find(file => file.path === entry.file.filename)).filter(Boolean));
+  let customVisibility = $derived(Object.keys(controls.rules).length + Object.keys(controls.overrides).length);
   let groups = $derived(controls.folders
     ? [...new Set(shownEntries.map(entry => entry.file.directory))].map(name => ({ name, entries: shownEntries.filter(entry => entry.file.directory === name) }))
     : [{ name: '', entries: shownEntries }]);
@@ -49,7 +56,7 @@
     const { order, query, rules, overrides, root, expanded, folders, collapsedFolders } = actor.getSnapshot().context;
     const previous = { order: before.order, query: before.query, rules: before.rules, overrides: before.overrides, root: before.root, expanded: before.expanded, folders: before.folders, collapsedFolders: before.collapsedFolders };
     const next = { order, query, rules, overrides, root, expanded, folders, collapsedFolders };
-    if (JSON.stringify(previous) !== JSON.stringify(next)) onControlsChange?.(next, event.type === 'QUERY.SET' ? 'replace' : 'push');
+    if (JSON.stringify(previous) !== JSON.stringify(next)) onControlsChange?.(next, event.type === 'QUERY.SET' ? 'replace' : 'push', ['FILE.TOGGLE','FOLDER.TOGGLE','GROUP.TOGGLE'].includes(event.type) ? undefined : model.paths.includes(selectedPath) ? selectedPath : model.paths[0] ?? null);
   };
   async function select(path) {
     send({ type: 'FILE.SET', path, visibility: controls.overrides[path] === 'hide' ? 'show' : controls.overrides[path] });
@@ -67,23 +74,26 @@
 </script>
 
 {#snippet queueEntry(entry)}
-        {@const orderExplanation=explainReviewOrder(entry,model.entries,controls.order).join('\n')}
-        <a href={fileHref?.(entry.file.filename) ?? "#"} class="queue-file" class:active={entry.file.filename === selectedPath} class:folded={entry.state === 'fold'} title={`${entry.file.filename}\n${orderExplanation}\n${entry.reason}`} aria-label={`${entry.file.filename}, reading position ${entry.rank} of ${model.entries.length}, ${entry.file.additions} lines added, ${entry.file.deletions} lines removed${entry.state === 'fold' ? ', folded' : ''}`} aria-current={entry.file.filename === selectedPath ? 'true' : undefined} data-event="organization-select-file" draggable={!docking && Boolean(onOpenBeside)} onpointerdown={event => { if (docking) beginReviewFileDrag(event, { file: entry.file.filename, rev: comparison.head, base: comparison.base, view: 'diff' }); }} ondragstart={event => { event.dataTransfer.setData('application/x-prview-file', JSON.stringify({ file: entry.file.filename, rev: comparison.head, base: comparison.base, view: 'diff' })); event.dataTransfer.effectAllowed = 'copy'; }} onclick={event => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return; event.preventDefault(); select(entry.file.filename); }}>
-          <span class="rank" title={orderExplanation}>#{entry.rank}</span><span class="path"><strong>{entry.file.name}</strong><small>{entry.file.directory}</small></span>
-          <span class="file-stats" title={`${entry.file.additions} lines added, ${entry.file.deletions} lines removed (${entry.file.changes} changed lines total)`}><span class="added">+{entry.file.additions}</span> <span class="removed">−{entry.file.deletions}</span>{#if entry.state === 'fold'}<span class="fold-label">folded</span>{/if}</span>
-        </a>
-        {#if onOpenBeside}<button class="open-beside" aria-label={`Open ${entry.file.name} beside`} title="Open in a new pane beside the active file" onclick={() => onOpenBeside(entry.file.filename)}>Open beside</button>{/if}
+  {@const orderExplanation=explainReviewOrder(entry,model.entries,controls.order).join('\n')}
+  <div class="queue-entry">
+    <a href={fileHref?.(entry.file.filename) ?? "#"} class="queue-file" class:active={entry.file.filename === selectedPath} class:folded={entry.state === 'fold'} title={`${entry.file.filename}\n${orderExplanation}\n${entry.reason}`} aria-label={`${entry.file.filename}, reading position ${entry.rank} of ${model.entries.length}, ${entry.file.additions} lines added, ${entry.file.deletions} lines removed${entry.state === 'fold' ? ', folded' : ''}`} aria-current={entry.file.filename === selectedPath ? 'true' : undefined} data-event="organization-select-file" draggable={!docking && Boolean(onOpenBeside)} onpointerdown={event => { if (docking) beginReviewFileDrag(event, { file: entry.file.filename, rev: comparison.head, base: comparison.base, view: 'diff' }); }} ondragstart={event => { event.dataTransfer.setData('application/x-prview-file', JSON.stringify({ file: entry.file.filename, rev: comparison.head, base: comparison.base, view: 'diff' })); event.dataTransfer.effectAllowed = 'copy'; }} onclick={event => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return; event.preventDefault(); select(entry.file.filename); }}>
+      {#if controls.order !== 'path'}<span class="rank" title={orderExplanation}>#{entry.rank}</span>{/if}<span class="path"><strong>{entry.file.name}</strong>{#if !controls.folders}<small>{entry.file.directory}</small>{/if}</span>
+      <span class="file-stats" title={`${entry.file.additions} lines added, ${entry.file.deletions} lines removed`}><span class="added">+{entry.file.additions}</span> <span class="removed">−{entry.file.deletions}</span>{#if entry.state === 'fold'}<span class="fold-label">folded</span>{/if}</span>
+    </a>
+    {#if onOpenBeside}<div class="entry-actions"><Popover label={`Actions for ${entry.file.filename}`} closeOnAction><button class="menu-action" onclick={() => onOpenBeside(entry.file.filename)}>Open beside</button></Popover></div>{/if}
+  </div>
 {/snippet}
 
 <div class="organization" aria-label="Review organization">
-  <div class="organization-head"><strong>Review order</strong><button onclick={() => send({ type: 'SHOW_ALL' })}>Show all</button></div>
-  <label>Reading order
+  <div class="organization-controls">
+    <div class="filter-row"><input type="search" aria-label="Find a changed file" placeholder="Filter files…" value={controls.query} oninput={event => send({ type: 'QUERY.SET', query: event.currentTarget.value })} /><Popover bind:this={optionsPanel} label="File and review options" text="☷">
+  <div class="organization-head"><strong>File and review options</strong><button onclick={() => send({ type: 'SHOW_ALL' })}>Show all</button></div>
+  <label>Order by
     <select aria-label="Reading order" value={controls.order} onchange={event => send({ type: 'ORDER.SET', order: event.currentTarget.value })}>
-      <option value="attention">Attention</option><option value="original">Original</option><option value="volume">Changed lines</option>
+      <option value="path">File path</option><option value="attention">Attention</option><option value="original">Original</option><option value="volume">Changed lines</option>
       <option value="flow" disabled={!graph.edges.length}>Import flow</option>
     </select>
   </label>
-  <input type="search" aria-label="Find a changed file" placeholder="Find a file or path…" value={controls.query} oninput={event => send({ type: 'QUERY.SET', query: event.currentTarget.value })} />
   <label class="group-toggle"><input type="checkbox" checked={controls.folders} disabled={controls.order === 'flow'} onchange={() => send({ type: 'GROUP.TOGGLE' })} /> Group by folder</label>
   <details>
     <summary>Categories <span>{model.counts.show} shown · {model.counts.fold} folded · {model.counts.hide} hidden</span></summary>
@@ -98,7 +108,7 @@
   </details>
   {#if snapshot.matches('loading')}<p class="note" role="status">Reading pinned source… Categories remain available.</p>
   {:else if snapshot.matches('error')}<div class="note error" role="alert">{controls.error} <button onclick={() => send({ type: 'RETRY' })}>Retry</button></div>
-  {:else}<p class="note">{graph.coverage.parsedHeadFiles} head files parsed · {graph.edges.length} reference candidates</p>{/if}
+  {:else}<details><summary>Analysis details</summary><p class="note">{graph.coverage.parsedHeadFiles} head files parsed · {graph.edges.length} reference candidates</p>{#each graph.diagnostics as diagnostic}<p class="note">{diagnostic}</p>{/each}<p class="note">Aliases and unchanged targets may resolve differently. This is not a complete call graph.</p></details>{/if}
   {#if controls.order === 'attention'}<p class="note">Implementation first, then tests and supporting files. Hover a rank for why.</p>{/if}
   {#if controls.order === 'flow'}
     <p class="note">Importer before imported module; changed paths only. {controls.root ? `${model.flow.reachable.size} files in the path.` : 'All components.'}
@@ -127,7 +137,16 @@
       {/each}
     </details>
   {/if}
+    </Popover></div>
+    {#if controls.order !== 'path' || customVisibility || !controls.folders}
+      <button class="active-options" title="Change the active review options" onclick={showOptions}>{controls.order === 'attention' ? 'Attention order' : controls.order === 'volume' ? 'Changed lines' : controls.order === 'flow' ? 'Import flow' : controls.order === 'original' ? 'Original order' : 'Flat list'}{#if model.counts.fold || model.counts.hide} · {model.counts.fold} folded · {model.counts.hide} hidden{/if}</button>
+    {/if}
+    {#if snapshot.matches('error')}<div class="note error" role="alert">Analysis unavailable. <button onclick={showOptions}>Details / retry</button></div>{/if}
+  </div>
   <div class="queue" aria-label="Ordered changed files">
+    {#if controls.order === 'path' && controls.folders}
+      <FileTree files={treeFiles} {selectedPath} onSelect={select} collapsedPaths={controls.collapsedFolders} onToggleDirectory={directory => send({type:'FOLDER.TOGGLE',directory})} {onOpenBeside} onDragFile={(event,path) => beginReviewFileDrag(event,{file:path,rev:comparison.head,base:comparison.base,view:'diff'})} />
+    {:else}
     {#each groups as group}
       <div class="folder-group">
         {#if group.name}
@@ -142,8 +161,8 @@
         {/if}
       </div>
     {/each}
+    {/if}
     {#if !model.visible.length}<p class="note">No visible files match. <button onclick={() => { send({ type: 'QUERY.SET', query: '' }); send({ type: 'SHOW_ALL' }); }}>Show all files</button></p>{/if}
-  </div>
   {#if foldedEntries.length}
     <details open={Boolean(controls.query)}><summary>Folded files ({foldedEntries.length})</summary>
       {#each foldedEntries as entry (entry.file.filename)}{@render queueEntry(entry)}{/each}
@@ -156,13 +175,16 @@
       {/each}
     </details>
   {/if}
-  <details><summary>Source coverage and limits</summary>{#each graph.diagnostics as diagnostic}<p class="note">{diagnostic}</p>{/each}<p class="note">Aliases and unchanged targets may resolve differently. This is not a complete call graph.</p></details>
+  </div>
 </div>
 
 <style>
   a.queue-file, a.related { text-decoration: none; color: inherit; }
-  .open-beside { margin: -3px 0 6px 24px; font-size: 10px; color: var(--muted); }
-  .organization { padding: 10px 8px 24px; font-size: 12px; color: var(--text); }
+  .organization { display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;width:100%;height:100%;font-size:12px;color:var(--text); }
+  .organization-controls{flex:none;padding:0 7px 8px;background:var(--bg);}
+  .filter-row{display:flex;align-items:center;gap:5px;} .filter-row input{width:0;flex:1 1 0;min-width:0;margin:0;} .queue{flex:1;min-height:0;overflow:auto;padding:0 4px 12px;}
+  .active-options{display:block;margin-top:5px;font-size:11px;text-align:left;}
+  .queue-entry{position:relative;} .entry-actions{position:absolute;right:0;top:7px;opacity:0;} .queue-entry:hover .entry-actions,.queue-entry:focus-within .entry-actions{opacity:1;} @media(pointer:coarse){.entry-actions{opacity:1;}}
   .organization-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
   label { display:flex; gap:6px; align-items:center; justify-content:space-between; margin:8px 0; }
   input[type='search'], select { color:var(--text); background:var(--bg); border:1px solid var(--border-soft); border-radius:5px; padding:6px; min-width:0; }
@@ -180,12 +202,12 @@
   .error { color:var(--red); }
   .role-rule span { color:var(--text-dim); margin-left:auto; }
   .role-rule select { width:80px; }
-  .queue-file { width:100%; display:flex; align-items:center; gap:7px; text-align:left; color:var(--text); padding:9px 4px; border-bottom:1px solid var(--border-soft); }
+  .queue-file { box-sizing:border-box;width:100%; display:flex; align-items:center; gap:7px; text-align:left; color:var(--text); padding:6px 32px 6px 4px; border-bottom:1px solid var(--border-soft); }
   .queue-file.active { background:var(--bg-hover); border-left:2px solid var(--link); }
   .queue-file.folded { color:var(--text-dim); }
   .path { flex:1; min-width:0; }
   strong, small { display:block; overflow:hidden; text-overflow:ellipsis; }
-  .path strong { font-weight:500; font-family:var(--font-code,monospace); }
+  .path strong { font-weight:400; font-family:var(--sans); }
   small { color:var(--text-dim); margin-top:4px; font-size:10px; }
   .rank { cursor:help; text-decoration:underline dotted; text-underline-offset:3px; }
   .rank, .count { color:var(--text-faint); font-size:10px; }

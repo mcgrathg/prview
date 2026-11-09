@@ -16,6 +16,7 @@
   import { whenIdle } from "./preload.js";
   import { shouldToggleHoveredViewed } from "./dom.js";
   import OpenInVscode from './OpenInVscode.svelte';
+  import Popover from "./Popover.svelte";
   import CommitContext from './CommitContext.svelte';
   import SymbolCard from './SymbolCard.svelte';
   import { symbolRequest } from './symbolContext.js';
@@ -44,6 +45,7 @@
     viewed = new Set(),
     dismissedViewed = new Set(),
     onToggleViewed = null,
+    onOpenBeside = null,
     onHoverFile = null,
     repo,
     number = null,
@@ -2372,7 +2374,7 @@
   {/if}
 {/snippet}
 
-<div class="diff" class:file-editing={!!fileEditor} bind:this={diffEl}>
+<div class="diff" class:compact-review={enhancedReview} class:file-editing={!!fileEditor} bind:this={diffEl}>
   {#if enhancedReview && fileDraftNotice}<div class="file-edit-error" role="status">{fileDraftNotice}</div>{/if}
   {#each renderedFiles as indexedFile (indexedFile.path)}
     {@const file = hydratedFiles.get(indexedFile.path) ?? indexedFile}
@@ -2444,13 +2446,9 @@
               <button class="cbtn ghost" onclick={() => discardFileEdit(false)}>Close</button>
             {/if}
           </div>
-        {:else if !isCollapsed && editable && !file.isBinary && !file.isDeleted && !file.isUnchangedRename}
+        {:else if !enhancedReview && !isCollapsed && editable && !file.isBinary && !file.isDeleted && !file.isUnchangedRename}
           <button class="whole-btn file-edit-btn" onclick={(event) => startFileEdit(file, toolbarEditPlacement(event.currentTarget))}>Edit</button>
         {/if}
-        {#if enhancedReview && reviewPrGithubHref(repo, number)}
-          <a class="whole-btn" href={reviewPrGithubHref(repo, number) + "/files"} use:githubReviewAnchor={{ repo, number, path: file.path }} target="_blank" rel="noopener noreferrer">GitHub</a>
-        {/if}
-        {#if enhancedReview}<OpenInVscode {repo} path={file.path} />{/if}
         {#if onToggleViewed}
           <button
             class="viewed-btn"
@@ -2465,6 +2463,18 @@
           </button>
           {#if enhancedReview && dismissedViewed.has(file.path)}<span class="viewed-dismissed" role="status">Changed since viewed</span>{/if}
         {/if}
+        {#if enhancedReview}
+          <Popover label={`File actions for ${file.path}`} closeOnAction>
+            {#if onOpenBeside}<button class="menu-action" onclick={()=>onOpenBeside(file.path)}>Open beside</button>{/if}
+            {#if !isCollapsed && !file.isBinary && !file.isDeleted && !file.isUnchangedRename}<button class="menu-action" disabled={whole?.status === 'loading'} onclick={()=>toggleWholeFile(file)}>{whole?.status === 'ready' ? 'Show diff hunks' : whole?.status === 'loading' ? 'Loading full file…' : 'Expand all lines'}</button>{/if}
+            {#if !isCollapsed && editable && !file.isBinary && !file.isDeleted && !file.isUnchangedRename}<button class="menu-action" onclick={event=>startFileEdit(file,toolbarEditPlacement(event.currentTarget))}>Edit file</button>{/if}
+            {#if headSha && baseSha}<button class="menu-action" onclick={event=>commitContext?.inspect(event,file.path)}>Commit context</button>{/if}
+            {#if onOpenHistory && base}<button class="menu-action" onclick={()=>onOpenHistory(file.path)}>File history</button>{/if}
+            <hr/>
+            <a class="menu-action" href={reviewPrGithubHref(repo, number) + '/files'} use:githubReviewAnchor={{repo,number,path:file.path}} target="_blank" rel="noopener noreferrer">View on GitHub ↗</a>
+            <OpenInVscode {repo} path={file.path}/>
+          </Popover>
+        {:else}
         {#if !isCollapsed && !file.isBinary && !file.isDeleted && !file.isUnchangedRename}
           <button class="whole-btn" disabled={whole?.status === "loading"} onclick={() => toggleWholeFile(file)}>
             {whole?.status === "ready"
@@ -2476,12 +2486,11 @@
                   : "whole file"}
           </button>
         {/if}
-        {#if enhancedReview && headSha && baseSha}<button class="commit-context-btn" title="Commit context for this file" aria-label={`Commit context for ${file.path}`} data-event="inspect-commit-context" onclick={event=>commitContext?.inspect(event,file.path)}><svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 10h4m8 0h4"/><circle cx="10" cy="10" r="4"/></svg></button>{/if}
         {#if onOpenHistory && base}
           <button class="whole-btn shortcut-action" onclick={() => onOpenHistory(file.path)}>
             History {#if file.path === historyShortcutPath}<Kbd keys="h" />{/if}
           </button>
-        {/if}
+        {/if}        {/if}
       </div>
       {:else}
         <div class="file-head-placeholder" style="height:{HEAD_H}px"></div>
@@ -2672,10 +2681,6 @@
 <CodeActionsMenu {repo} bind:this={codeMenu} onInspect={enhancedReview ? inspectSymbol : null} onDefinition={onLookupDefinition} onReferences={onLookupReferences} onHistory={onOpenHistory} />
 
 <style>
-  .commit-context-btn {opacity:0;flex-shrink:0;display:flex;align-items:center;justify-content:center;width:24px;height:24px;padding:3px;border:0;border-radius:4px;background:transparent;color:var(--text-dim);cursor:pointer;}
-  .file-head-row:hover .commit-context-btn,.file-head-row:focus-within .commit-context-btn {opacity:1;}
-  .commit-context-btn:focus-visible {outline:2px solid var(--link);opacity:1;}
-  @media(pointer:coarse){.commit-context-btn{opacity:1;}}
 
   .viewed-dismissed, .file-edit-draft-status { color: var(--text-dim); font-size: 12px; }
   .file-edit-draft-status { padding: 0 12px 8px; }
@@ -2688,6 +2693,7 @@
     max-width: 100%;
   }
   .file {
+    scroll-margin-top:calc(var(--review-toolbar-height, 0px) + 8px);
     border: 0;
     border-radius: 8px;
     margin-bottom: 16px;
@@ -3452,5 +3458,14 @@
     border-color: var(--border-soft);
     border-radius: 8px;
     box-shadow: none;
+  }
+  .compact-review .file-head-row{top:var(--review-toolbar-height,0px);background:var(--panel-raised);}
+  @media(max-width:700px),(pointer:coarse) and (max-height:500px){
+    .compact-review .file-head-row{position:sticky;flex-wrap:nowrap;min-height:38px;padding:2px 3px;}
+    .compact-review .file-head{flex:1 1 auto;min-width:0;min-height:34px;padding:4px 5px;border:0;gap:5px;}
+    .compact-review .file.collapsed .file-head-row > .viewed-btn{display:inline-flex;}
+    .compact-review .file.collapsed .file-head-row > :global(.popover-trigger){display:inline-flex;}
+    .compact-review .file.collapsed .file-head-row > :global(.popover-panel:popover-open){display:block;}
+    .compact-review .file-stat{display:none;}.compact-review .file-head-row > .viewed-btn{flex:none;min-height:34px;padding:4px;border:0;}.compact-review .viewed-label{display:none;}
   }
 </style>

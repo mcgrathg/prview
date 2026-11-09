@@ -1,4 +1,5 @@
 <script>
+  import { openQuickCommands, CLOSE_FINDERS_EVENT } from "./quickCommands.svelte.js";
   import { tick, untrack } from "svelte";
   import { createActor } from "xstate";
   import { reviewLookupMachine } from "./reviewLookupMachine.js";
@@ -225,11 +226,20 @@
     inputEl?.select();
   }
 
+  $effect(() => {
+    const dismiss = () => { if (open && !fileOpen) close(); };
+    window.addEventListener(CLOSE_FINDERS_EVENT, dismiss);
+    return () => window.removeEventListener(CLOSE_FINDERS_EVENT, dismiss);
+  });
+
   function publishSearch() {
     if (onReviewNavigate && (mode === "files" || mode === "search")) onReviewNavigate({ search: { mode, query } }, "replace");
   }
 
   function updateQuery(value) {
+    if (directCodeLinks && mode === 'files' && value.trimStart().startsWith('>')) {
+      close(); queueMicrotask(() => openQuickCommands(value)); return;
+    }
     query = value;
     publishSearch();
   }
@@ -411,7 +421,7 @@
   });
 
   $effect(() => {
-    if (open && view) ensurePreview(view.path);
+    if (open && view && (fileOpen || !directCodeLinks || mode !== "files")) ensurePreview(view.path);
   });
 
   // Scroll once per shown file and target; colours arriving later must not undo the reader's scroll.
@@ -419,7 +429,7 @@
   $effect(() => {
     const v = view;
     const p = v ? previews.get(v.path) : null;
-    if (!open || !editorEl || !v || !p || p.status !== "ready") return;
+    if (!open || (!fileOpen && directCodeLinks && mode === "files") || !editorEl || !v || !p || p.status !== "ready") return;
     if (scrolled.editor === editorEl && scrolled.view === v && scrolled.lines === p.lines) return;
     scrolled = { editor: editorEl, view: v, lines: p.lines };
     const editor = editorEl;
@@ -596,7 +606,7 @@
       else if (e.key === "j" && e.target !== inputEl) move(1);
       else if (e.key === "k" && e.target !== inputEl) move(-1);
       else if (directCodeLinks && searchResultCommand(e,e.target===inputEl)==='beside' && onOpenBeside && current) { const entry=current; close(false); onOpenBeside(entry); }
-      else if (directCodeLinks && searchResultCommand(e,e.target===inputEl)==='preview' && e.target!==inputEl) editorEl?.focus({preventScroll:true});
+      else if (directCodeLinks && mode !== 'files' && searchResultCommand(e,e.target===inputEl)==='preview' && e.target!==inputEl) editorEl?.focus({preventScroll:true});
       else if (e.key === "Enter" && !e.isComposing) openCurrent();
       else {
         if (prefs.fileFinderEnabled && !meta && !e.altKey) e.stopImmediatePropagation();
@@ -615,7 +625,7 @@
 {#snippet marked(text, ranges)}{#each matchRuns([{ content: text }], ranges) as run}{#if run.hit}<mark class="ts-hl">{run.content}</mark>{:else}{run.content}{/if}{/each}{/snippet}
 
 {#if open}
-  <div class="ts-root" class:full={fileOpen} role="dialog" aria-label="code browser">
+  <div class="ts-root" class:compact={directCodeLinks && mode === "files" && !fileOpen} class:full={fileOpen} role="dialog" aria-label="code browser">
     <div class="ts-side">
       <div class="ts-tabs">
         <button class="ts-tab" class:on={mode === "search"} onclick={() => activate("search")}>
@@ -640,7 +650,7 @@
           bind:this={inputEl}
           bind:value={query}
           oninput={(event) => updateQuery(event.currentTarget.value)}
-          placeholder={mode === "search" ? "Search in files…" : "Go to file…"}
+          placeholder={mode === "search" ? "Search in files…" : directCodeLinks ? "Find a file… or > for commands" : "Go to file…"}
           spellcheck="false"
           autocomplete="off"
         />
@@ -654,7 +664,7 @@
         {:else if results.length}{selected + 1}/{results.length}
         {:else if (mode === "search" ? query.trim() : true)}no matches{/if}
       </div>
-      {#if directCodeLinks}<div class="ts-count">↑↓ preview · Space focus preview · Enter open · ⌘/Ctrl+Enter beside</div>{/if}
+      {#if directCodeLinks}<div class="ts-count">{mode === "files" ? "↑↓ select · Enter open · ⌘/Ctrl+Enter beside · > commands" : "↑↓ preview · Space focus preview · Enter open · ⌘/Ctrl+Enter beside"}</div>{/if}
       <div class="ts-list" onmousemove={trackMouse}>
         {#each groups as group (group.path)}
           <div class="ts-group-head mono" title={group.path}>
@@ -683,7 +693,7 @@
                   >{#if prefs.fileFinderEnabled && mode === "search"}{#each snippetRuns(item, toks) as run}<span class:ts-hit={run.hit} style:color={run.color}>{run.content}</span>{/each}{:else if toks}{#each toks as t}<span style="color:{t.color}">{t.content}</span>{/each}{:else}{item.text}{/if}</span
                 >
               {:else}
-                <span class="ts-path">{#if prefs.fileFinderEnabled && item.positions}{@render marked(group.path, positionRanges(item.positions))}{:else}{group.path}{/if}</span>
+                <span class="ts-path">{#if directCodeLinks && mode === 'files'}<strong class="quick-file-name">{#if prefs.fileFinderEnabled && item.positions}{@render marked(tail(group.path),positionRanges(item.positions,group.path.lastIndexOf('/')+1))}{:else}{tail(group.path)}{/if}</strong><small class="quick-file-directory">{group.path.includes('/') ? group.path.slice(0,group.path.lastIndexOf('/')) : 'Repository root'}</small>{:else if prefs.fileFinderEnabled && item.positions}{@render marked(group.path, positionRanges(item.positions))}{:else}{group.path}{/if}</span>
                 {#if item.changed}<span class="ts-diff badge review">diff</span>{/if}
               {/if}
               {#if item.index === selected}<Kbd keys="enter" />{/if}
@@ -751,6 +761,10 @@
 <CodeActionsMenu {repo} bind:this={codeMenu} onInspect={directCodeLinks ? inspectSymbol : null} onDefinition={(symbol, path, position) => lookupDefinition(symbol, path, false, position)} onReferences={onLookupReferences} onHistory={onOpenHistory ? (path, symbol) => { close(); onOpenHistory(path, symbol); } : null} />
 
 <style>
+  .quick-file-name{display:block;font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;}.quick-file-directory{display:block;font-size:10px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;margin-top:3px;}
+  .ts-root.compact{inset:12vh auto auto 50%;transform:translateX(-50%);width:min(620px,calc(100vw - 24px));height:min(520px,75vh);grid-template-columns:minmax(0,1fr);border:1px solid var(--border);border-radius:9px;box-shadow:0 0 0 100vmax #0007,var(--shadow-dialog);overflow:hidden;}
+  .ts-root.compact .ts-main{display:none;}.ts-root.compact .ts-group-head{display:none;}.ts-root.compact .ts-item{min-height:36px;}.ts-root.compact .ts-side{border:0;}
+
   .ts-root {
     position: fixed;
     inset: 0;

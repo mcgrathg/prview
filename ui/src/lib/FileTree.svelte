@@ -1,15 +1,16 @@
 <script>
   import { tick } from "svelte";
+  import Popover from "./Popover.svelte";
   import Chevron from "./Chevron.svelte";
 
-  let { files, selectedPath, hoveredPath = null, onSelect, onContextMenu = null } = $props();
+  let { files, selectedPath, hoveredPath = null, onSelect, onContextMenu = null, collapsedPaths = null, onToggleDirectory = null, onOpenBeside = null, onDragFile = null } = $props();
 
-  const INDENT = 16;
-  let lastSelectedPath = null;
-  const ROW_HEIGHT = 32;
+  let lastSelectionKey = null;
+  let rowHeight = $state(32);
   const OVERSCAN = 12;
 
-  let collapsedDirs = $state(new Set());
+  let localCollapsedDirs = $state(new Set());
+  let collapsedDirs = $derived(collapsedPaths ? new Set(collapsedPaths) : localCollapsedDirs);
   let treeEl = $state();
   let windowStart = $state(0);
   let windowEnd = $state(40);
@@ -108,18 +109,20 @@
 
   function updateWindow() {
     if (!treeEl) return;
+    rowHeight = parseFloat(getComputedStyle(treeEl).getPropertyValue('--tree-row-height')) || 32;
     const root = treeEl.parentElement;
     const top = Math.max(0, root.scrollTop - scrollGeometry(root).treeTop);
-    const start = Math.max(0, Math.floor(top / ROW_HEIGHT) - OVERSCAN);
-    const end = Math.min(rows.length, Math.ceil((top + root.clientHeight) / ROW_HEIGHT) + OVERSCAN);
+    const start = Math.max(0, Math.floor(top / rowHeight) - OVERSCAN);
+    const end = Math.min(rows.length, Math.ceil((top + root.clientHeight) / rowHeight) + OVERSCAN);
     if (start !== windowStart) windowStart = start;
     if (end !== windowEnd) windowEnd = end;
   }
 
   function toggleDir(path) {
+    if (onToggleDirectory) { onToggleDirectory(path); return; }
     const next = new Set(collapsedDirs);
     next.has(path) ? next.delete(path) : next.add(path);
-    collapsedDirs = next;
+    localCollapsedDirs = next;
   }
 
   let windowFrame = null;
@@ -153,17 +156,18 @@
 
   $effect(() => {
     const path = selectedPath;
-    if (path === lastSelectedPath) return;
-    lastSelectedPath = path;
     const index = rows.findIndex((row) => row.kind === "file" && row.value.path === path);
+    const key = `${path}:${index}`;
+    if (key === lastSelectionKey) return;
+    lastSelectionKey = key;
     if (index < 0) return;
     requestAnimationFrame(async () => {
       if (!treeEl) return;
       const root = treeEl.parentElement;
       const { treeTop } = scrollGeometry(root);
-      const top = treeTop + index * ROW_HEIGHT;
+      const top = treeTop + index * rowHeight;
       if (top < root.scrollTop) root.scrollTop = top;
-      else if (top + ROW_HEIGHT > root.scrollTop + root.clientHeight) root.scrollTop = top + ROW_HEIGHT - root.clientHeight;
+      else if (top + rowHeight > root.scrollTop + root.clientHeight) root.scrollTop = top + rowHeight - root.clientHeight;
       updateWindow();
       await tick();
       const row = treeEl.querySelector(".file.selected");
@@ -183,14 +187,17 @@
 {/snippet}
 
 <div class="tree" bind:this={treeEl}>
-  <div class="spacer" style="height:{windowStart * ROW_HEIGHT}px" aria-hidden="true"></div>
+  <div class="spacer" style="height:{windowStart * rowHeight}px" aria-hidden="true"></div>
   {#each rows.slice(windowStart, windowEnd) as row (row.key)}
     {@const value = row.value}
     {#if row.kind === "dir"}
       <button
         class="row dir"
+        class:contains-selected={Boolean(selectedPath?.startsWith(`${value.path}/`))}
         data-event="tree-dir"
-        style="padding-left: {row.depth * INDENT + 8}px"
+        style="padding-left:calc({row.depth} * var(--tree-indent,16px) + 8px)"
+        aria-expanded={!collapsedDirs.has(value.path)}
+        title={selectedPath?.startsWith(`${value.path}/`) ? `${value.path} · contains selected file` : value.path}
         onclick={() => toggleDir(value.path)}
         oncontextmenu={onContextMenu && ((event) => onContextMenu(event, `${value.path}/**`))}
       >
@@ -201,12 +208,16 @@
         <span class="counts mono"><span class="add">+{value.additions}</span><span class="del">−{value.deletions}</span></span>
       </button>
     {:else}
+      <div class="file-row">
       <button
         class="row file"
         data-event="tree-file"
+        title={`${value.path} · +${value.additions} −${value.deletions}`}
+        aria-current={value.path === selectedPath ? "location" : undefined}
+        onpointerdown={event => onDragFile?.(event, value.path)}
         class:selected={value.path === selectedPath}
         class:hovered={value.path === hoveredPath}
-        style="padding-left: {row.depth * INDENT + 8}px"
+        style="padding-left:calc({row.depth} * var(--tree-indent,16px) + 8px)"
         onclick={() => onSelect(value.path)}
         oncontextmenu={onContextMenu && ((event) => onContextMenu(event, value.path))}
       >
@@ -242,13 +253,17 @@
           <span class="counts mono"><span class="add">+{value.additions}</span><span class="del">−{value.deletions}</span></span>
         {/if}
       </button>
+      {#if onOpenBeside}<div class="row-actions"><Popover label={`Actions for ${value.path}`} closeOnAction><button class="menu-action" onclick={() => onOpenBeside(value.path)}>Open beside</button></Popover></div>{/if}
+      </div>
     {/if}
   {/each}
-  <div class="spacer" style="height:{Math.max(0, rows.length - windowEnd) * ROW_HEIGHT}px" aria-hidden="true"></div>
+  <div class="spacer" style="height:{Math.max(0, rows.length - windowEnd) * rowHeight}px" aria-hidden="true"></div>
 </div>
 
 <style>
+  .file-row{position:relative;height:var(--tree-row-height);flex:none;} .file-row .row{height:var(--tree-row-height);padding-right:31px;} .row-actions{position:absolute;right:0;top:2px;opacity:0;} .file-row:hover .row-actions,.file-row:focus-within .row-actions{opacity:1;} @media(pointer:coarse){.row-actions{opacity:1;}}
   .tree {
+    --tree-row-height:32px;
     display: flex;
     flex-direction: column;
   }
@@ -296,8 +311,8 @@
     top: 0;
     bottom: 0;
     left: 13px;
-    width: calc(var(--depth) * 16px);
-    background: repeating-linear-gradient(to right, var(--border) 0 1px, transparent 1px 16px);
+    width: calc(var(--depth) * var(--tree-indent,16px));
+    background: repeating-linear-gradient(to right, var(--border) 0 1px, transparent 1px var(--tree-indent,16px));
     pointer-events: none;
   }
   .folder-icon, .file-icon {
@@ -316,6 +331,7 @@
   .file-icon.style { color: #aa74d4; }
   .file-icon.image { color: #6caa75; }
   .file-icon.database { color: #b77d4c; }
+  .dir[aria-expanded=false].contains-selected .name{color:var(--link);}
   .dir .name {
     color: var(--text-dim);
     font-weight: 500;
@@ -383,6 +399,7 @@
   }
 
   @media (max-width: 700px), (pointer: coarse) and (max-height: 500px) {
+    .tree{--tree-row-height:44px;--tree-indent:8px;}.counts{display:none;}
     .row {
       min-height: 44px;
     }

@@ -43,3 +43,8 @@ export function shouldToggleHoveredViewed(event, tab, hoveredPath) {
     && !event.shiftKey
     && !isTypingTarget(event.target);
 }
+
+export function popoverReturnTarget(node) {
+  const menu=node?.closest?.('[popover]');
+  return menu ? document.querySelector(`[aria-controls="${CSS.escape(menu.id)}"]`) ?? node : node;
+}

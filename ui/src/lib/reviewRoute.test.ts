@@ -47,7 +47,9 @@ describe('shareable review snapshots', () => {
     const controls = { order: 'flow', query: 'test', rules: {}, overrides: { 'src/a.ts': 'show', '../bad': 'hide', 'src/b.ts': 'invalid' }, root: 'src/a.ts', expanded: ['src/a.ts', '../bad', 'src/a.ts'], folders: true };
     const restored = parseReviewRoute(buildReviewHash('acme/widgets', 12, { controls }))?.review.controls;
     expect(restored).toEqual({ order: 'flow', query: 'test', rules: {}, overrides: { 'src/a.ts': 'show' }, root: 'src/a.ts', expanded: ['src/a.ts'], folders: false, collapsedFolders: [] });
-    expect(normalizeReviewState({ controls: {} }).controls.rules).toEqual({ snapshot: 'fold', fixture: 'fold' });
+    expect(normalizeReviewState({ controls: {} }).controls).toEqual({order:'path',query:'',rules:{},overrides:{},expanded:[],folders:true,collapsedFolders:[]});
+    const oldControls={order:'attention',rules:{snapshot:'fold',fixture:'fold'},folders:false};
+    expect(parseReviewRoute(buildReviewHash('acme/widgets',12,{controls:oldControls}))?.review.controls).toMatchObject(oldControls);
   });
   test('round trips collapsed directories and reads older controls as fully expanded', () => {
     const controls = { folders: true, collapsedFolders: ['src/feature', '../bad', 'Repository root', 'src/feature'] };

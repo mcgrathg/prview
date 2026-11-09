@@ -1,4 +1,5 @@
 <script>
+  import { popoverReturnTarget } from './dom.js';
   import { tick } from 'svelte';
   import { createActor } from 'xstate';
   import { reviewLookupMachine } from './reviewLookupMachine.js';
@@ -16,7 +17,7 @@
   function dismiss() {close(); if(returnFocus?.isConnected)returnFocus.focus({preventScroll:true});}
   function portal(node){document.body.append(node);return{destroy(){node.remove();}};}
   export async function inspect(event,path) {
-    returnFocus=event.currentTarget;
+    returnFocus=popoverReturnTarget(event.currentTarget);
     const rect=returnFocus.getBoundingClientRect();
     x=Math.max(8,Math.min(rect.left,innerWidth-408));
     y=Math.max(8,Math.min(rect.bottom+8,innerHeight-260));

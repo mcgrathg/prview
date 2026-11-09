@@ -1,6 +1,6 @@
 # Why this Attention rank?
 
-The rank number and file link expose a native browser tooltip built from the current organization model. A dotted underline and help cursor make the number discoverable. File details → Why this order? uses the same formatter as a keyboard-accessible alternative. Nothing extra occupies the file list by default.
+Choose Attention in File and review options beside Filter files. The default file-path tree has no rank numbers. In Attention and other ranked modes, the rank number and file link expose a native browser tooltip built from the current organization model. A dotted underline and help cursor make the number discoverable. File details → Why this order? uses the same formatter as a keyboard-accessible alternative. Nothing extra occupies the file list by default.
 
 Attention is a reading plan. It sorts by role group first: implementation/configuration/dependency manifests, tests, documentation, other files, then snapshots/fixtures/lockfiles. Within each group, the existing engine prioritizes added source text matching if/throw/catch/assert, then more changed lines, then file path. The tooltip identifies the actual group and signal, states when patch text is unavailable, reports additions/deletions, and explains the first differing criterion against the adjacent global rank. Comments and strings can match the text check; the order is not a risk score and does not use import-graph centrality.
 

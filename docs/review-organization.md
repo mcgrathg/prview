@@ -4,13 +4,13 @@ Run the live app from the outer repository with `pnpm cockpit:live`, then open `
 
 The original analysis, relationship and import-flow functions live in `shared/review-organization/`. `capture.ts` adapts native diff metadata, including pure renames and empty additions. `server/reviewOrganization.ts` computes source evidence in a bounded worker from the PR's local mirror and caches it by repository and comparison. `model.ts` derives ordering and visibility; the UI preserves Cockpit's native diff objects and renderer.
 
-The enhanced review controls are enabled by default. Existing `?organize=1` links behave the same; `?legacy=1` before the PR hash selects the original Cockpit layout. Repository investigations remain separately enabled with `?investigate=1`. Code locations and organization controls restore through URL history.
+The enhanced review controls are enabled by default. New comparisons start with all files visible in a compact folder tree, ordered by file path. The button beside Filter files opens Attention, categories, related files and analysis details; active custom options stay visible outside the popover. Existing `?organize=1` links behave the same; `?legacy=1` before the PR hash selects the original Cockpit layout. Repository investigations remain separately enabled with `?investigate=1`. Code locations and organization controls restore through URL history.
 
 ## State transitions
 
 | Event | Evidence lifecycle | Review controls |
 | --- | --- | --- |
-| Start/reload | Load the named comparison; keep metadata usable meanwhile | Attention order; fixture/snapshot Fold defaults |
+| Start/reload | Load the named comparison; keep metadata usable meanwhile | File-path order; folders grouped; all files visible unless a URL restores explicit controls |
 | Same comparison again | Keep the in-flight or completed request | Preserve controls |
 | Different PR/revision | Cancel the prior promise actor and load the new comparison | Reset rules, overrides, query, root and expansion |
 | Late result from prior comparison | Ignored by the stopped invocation; response identity also checked | No change |

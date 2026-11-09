@@ -4,10 +4,18 @@
   // Title changes from group drops stay in the edit-title queue; tracking outlives a trip into a PR view.
   const retitles = $state({});
   const undoneRetitles = $state({});
+  function measureInboxControls(node) {
+    const page=node.closest('.page');
+    const measure=()=>page?.style.setProperty('--inbox-controls-height',`${node.offsetHeight}px`);
+    const observer=new ResizeObserver(measure);observer.observe(node);measure();
+    return{destroy(){observer.disconnect();}};
+  }
+
 </script>
 
 <script>
   import KitchenNotifications from "./KitchenNotifications.svelte";
+  import { reviewMode } from "./reviewMode.js";
   import { cookingStage } from "../../../shared/cookingStage.js";
   import { inboxGroupId, inboxGroups, prStack, topUnit as topUnitOf } from "./inboxGroups.js";
   import { coalescedRefresh } from "./coalescedRefresh.js";
@@ -28,6 +36,7 @@
   import { prefs } from "./prefs.svelte.js";
   import { isTypingTarget, shouldCopyPrUrl } from "./dom.js";
   import { scrollEdge } from "./scroll.js";
+  import Popover from "./Popover.svelte";
   import KeyBar from "./KeyBar.svelte";
   import PrRow from "./PrRow.svelte";
   import { lazyThumbnail } from "./rowMedia.js";
@@ -79,7 +88,8 @@
     selected = Math.max(0, ordered.findIndex((pr) => prKey(pr) === key));
     multiAnchor = null;
   }
-  let filterOpen = $state(false);
+  const calmInbox = reviewMode(location.search).enhanced;
+  let filterOpen = $state(calmInbox);
   let groupingSaving = $state(false);
   let filterQuery = $state("");
   let filterInput;
@@ -307,7 +317,7 @@
   let viewOptionsOpen = $state(false);
   let viewOptionsButton;
   let activeViewOptions = $derived(Number(selectedRepos.length > 0) + Number(authorFilter !== "all") + Number(hideDrafts));
-  let changedViewOptions = $derived(activeViewOptions + (prefs.queueTimeControlsEnabled ? Number(openedRange !== "all") + Number(timeOrder !== "queue") + Number(view === "open" && prefs.prGrouping.mode !== "status") : 0));
+  let changedViewOptions = $derived(activeViewOptions + (prefs.queueTimeControlsEnabled ? Number(openedRange !== "all") + Number(!calmInbox && timeOrder !== "queue") + Number(view === "open" && prefs.prGrouping.mode !== "status") : 0));
   function storedPeopleFilter() {
     try {
       const stored = JSON.parse(localStorage.getItem("cockpit:queue-people") ?? "{}");
@@ -646,7 +656,7 @@
   $effect(() => {
     const q = filterQuery.trim();
     historyRevision;
-    if (!wantsHistory(q)) {
+    if (view !== "open" || !wantsHistory(q)) {
       historyLoading = false;
       return;
     }
@@ -670,7 +680,7 @@
   // The Whiteboard reads `groups` too, so it never sees the date filter or timestamp order.
   let timeControlsActive = $derived(prefs.queueTimeControlsEnabled && view !== "whiteboard");
   let openedFilter = $derived(timeControlsActive ? openedBounds(openedRange, clock) : null);
-  let listOrder = $derived(timeControlsActive ? timeOrder : "queue");
+  let listOrder = $derived(timeControlsActive || calmInbox ? timeOrder : "queue");
   let customDraft = $derived(customOpenedRange(customFrom, customTo));
   let customApplied = $derived(appliedCustom !== null && typeof openedRange === "object" && appliedCustom.from === customFrom && appliedCustom.to === customTo);
   let appliedRangeLabel = $derived(typeof openedRange === "object"
@@ -740,7 +750,7 @@
   let filteredPrs = $derived(filterByOpened(scopedPrs, openedFilter));
   let scopedClosedPrs = $derived(filterByAuthorAndDraft(filterByRepositories(closedPrs.filter((pr) => !isSetAside(pr)), selectedRepos), peopleFilter, viewerLogin));
   let authorOptions = $derived(availableAuthors(view === "all" ? allPrs : view === "closed" ? closedPrs : prs, authorFilter === "all" || authorFilter === "me" ? [] : [{ author: authorFilter }]));
-  let filteredClosedPrs = $derived(sortByTime(orderQueueUnits(filterByOpened(scopedClosedPrs, openedFilter)), listOrder));
+  let filteredClosedPrs = $derived(sortByTime(orderQueueUnits(filterByOpened(calmInbox ? filterPrs(scopedClosedPrs, filterQuery, true) : scopedClosedPrs, openedFilter)), listOrder));
   let actionsHref = $derived.by(() => {
     const params = new URLSearchParams();
     if (selectedRepos.length === 0) params.append("repo", "");
@@ -1156,7 +1166,7 @@
     return pr ? groupId(pr) : null;
   });
   let scopedAllPrs = $derived(filterByAuthorAndDraft(allPrs.filter((pr) => !isSetAside(pr)), peopleFilter, viewerLogin));
-  let visibleAllPrs = $derived(sortByTime(orderQueueUnits(filterByOpened(scopedAllPrs, openedFilter)), listOrder));
+  let visibleAllPrs = $derived(sortByTime(orderQueueUnits(filterByOpened(calmInbox ? filterPrs(scopedAllPrs, filterQuery) : scopedAllPrs, openedFilter)), listOrder));
   let scopedArchivedPrs = $derived(filterByAuthorAndDraft(archivedPrs.filter((pr) => !isSetAside(pr)), peopleFilter, viewerLogin));
   let visibleArchivedPrs = $derived(sortByTime(filterByOpened(scopedArchivedPrs, openedFilter), listOrder));
   let ordered = $derived(view === "all" ? visibleAllPrs : view === "closed" ? filteredClosedPrs : showArchived ? [...openOrdered, ...visibleArchivedPrs] : openOrdered);
@@ -1463,10 +1473,11 @@
 
 </script>
 
-<div class="page" class:board-page={view === "whiteboard"} class:agents-page={view === "agents"}>
+<div class="page" class:calm-inbox={calmInbox} class:board-page={view === "whiteboard"} class:agents-page={view === "agents"}>
   <div class="inbox" onmousemove={trackMouse}>
+    <div class="inbox-controls" use:measureInboxControls>
     <header class="head">
-      <span class="head-title">{view === "agents" ? "Agents" : "Review queue"}</span>
+      <span class="head-title">{view === "agents" ? "Agents" : calmInbox ? "Pull requests" : "Review queue"}</span>
       <span class="head-right">
         {#if prefs.cookingSectionEnabled}
           <KitchenNotifications {active} {refreshRevision} {pollCompletedAt} />
@@ -1506,11 +1517,14 @@
           <button class="view-tab" role="tab" data-event="whiteboard-view" aria-selected={view === "whiteboard"} class:active={view === "whiteboard"} onclick={() => showView("whiteboard")}>Whiteboard</button>
         {/if}
       </div>
+      {#if calmInbox && (view === 'whiteboard' || view === 'agents')}<Popover label="Keyboard shortcuts" text="?">{#each keyBarKeys as command}<p class="inbox-shortcut"><kbd>{command.key}</kbd> {command.label}</p>{/each}</Popover>{/if}
       {#if view !== "whiteboard" && view !== "agents"}
+      {#if calmInbox}<select class="inbox-sort" aria-label="Sort pull requests" value={timeOrder} onchange={event=>chooseOrder(event.currentTarget.value)}>{#each TIME_ORDERS as option}<option value={option.value}>{option.label}</option>{/each}</select>{/if}
       <button class="view-options-toggle" bind:this={viewOptionsButton} aria-expanded={viewOptionsOpen} aria-controls="queue-view-options" title="Filters and view options" onclick={toggleViewOptions}>
         <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 5h14M5 10h10M8 15h4" /></svg>
         Filters{#if changedViewOptions}<span class="view-tab-count">{changedViewOptions}</span>{/if}
       </button>
+      {#if calmInbox}<Popover label="Keyboard shortcuts" text="?">{#each keyBarKeys as command}<p class="inbox-shortcut"><kbd>{command.key}</kbd> {command.label}</p>{/each}</Popover>{/if}
       <div class="queue-filters" id="queue-view-options" hidden={!viewOptionsOpen} role="region" aria-label="Filters and view options">
       {#if prefs.queueTimeControlsEnabled}
         <div class="time-controls">
@@ -1520,12 +1534,14 @@
               {#each OPENED_RANGES as option (option.value)}<option value={option.value}>{option.label}</option>{/each}
             </select>
           </label>
+          {#if !calmInbox}
           <label class="time-field">
             <span class="time-field-label">Order</span>
             <select aria-label="Order" class="time-select" value={timeOrder} onchange={(event) => chooseOrder(event.currentTarget.value)}>
               {#each TIME_ORDERS as option (option.value)}<option value={option.value}>{option.label}</option>{/each}
             </select>
           </label>
+          {/if}
           {#if view === "open"}
             <label class="time-field">
               <span class="time-field-label">Grouping</span>
@@ -1585,6 +1601,34 @@
       {/if}
     </div>
 
+    {#if calmInbox ? view !== "agents" && view !== "whiteboard" : filterOpen && view === "open"}
+      <div class="filter-row">
+        <span class="filter-icon">/</span>
+        <input
+          bind:this={filterInput}
+          aria-label="Filter pull requests"
+          bind:value={filterQuery}
+          oninput={() => (selected = 0)}
+          onkeydown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              const pr = ordered[selected];
+              if (pr) {
+                restoreKey = prKey(pr);
+                location.hash = `#/pr/${pr.repo}/${pr.number}`;
+              }
+            }
+          }}
+          placeholder="Filter pull requests… text, author:, repo:, state:"
+          spellcheck="false"
+          autocomplete="off"
+        />
+        <span class="filter-hint">/ to focus</span>
+      </div>
+    {/if}
+
+    </div>
+
     {#if view === "agents" && prefs.agentConversationsEnabled}
       {#if Agents}
         <Agents {active} {refreshRevision} />
@@ -1618,30 +1662,6 @@
       </div>
     {/if}
 
-    {#if filterOpen && view === "open"}
-      <div class="filter-row">
-        <span class="filter-icon">/</span>
-        <input
-          bind:this={filterInput}
-          bind:value={filterQuery}
-          oninput={() => (selected = 0)}
-          onkeydown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              const pr = ordered[selected];
-              if (pr) {
-                restoreKey = prKey(pr);
-                location.hash = `#/pr/${pr.repo}/${pr.number}`;
-              }
-            }
-          }}
-          placeholder="filter — text, or author: state: is: repo: base: review:"
-          spellcheck="false"
-          autocomplete="off"
-        />
-        <span class="filter-hint">esc to clear</span>
-      </div>
-    {/if}
 
     {#snippet rowMedia(pr)}
       {#if pr.media?.length}
@@ -2007,10 +2027,14 @@
 {:else if bulkAutofixFlash.value}
   <div class="copied-flash">{bulkAutofixFlash.value}</div>
 {:else if view !== "whiteboard" && view !== "agents"}
-  <KeyBar keys={keyBarKeys} />
+  {#if !calmInbox}<KeyBar keys={keyBarKeys} />{/if}
 {/if}
 
 <style>
+  .inbox-controls{display:contents;}
+  .calm-inbox:not(.board-page):not(.agents-page){padding-bottom:20px;}
+  .inbox-shortcut{margin:7px 0;font-size:12px;}.inbox-shortcut kbd{display:inline-block;min-width:58px;color:var(--text-dim);}
+  .inbox-sort{max-width:180px;margin-left:auto;padding:7px 8px;border:1px solid var(--border);border-radius:5px;background:var(--panel);color:var(--text);font:12px var(--sans);}.calm-inbox .view-options-toggle{margin-left:0;}
   .cooking-toggle { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
   .cooking-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
   .cooking-indicator { width: 7px; height: 7px; border-radius: 50%; background: #d99a39; flex-shrink: 0; }
@@ -3159,4 +3183,8 @@
   .page.agents-page { padding-bottom: 20px; overflow: hidden; }
   .agents-page .inbox { height: 100%; padding-bottom: 0; display: flex; flex-direction: column; }
   .agents-page .head, .agents-page .queue-toolbar { flex-shrink: 0; }
+  .calm-inbox:not(.board-page):not(.agents-page) .inbox-controls{display:block;position:sticky;top:0;z-index:15;background:var(--bg);padding-top:1px;padding-bottom:8px;border-bottom:1px solid var(--border-soft);margin-bottom:10px;}
+  .calm-inbox .queue-toolbar{position:relative;} .calm-inbox .queue-filters{position:absolute;top:calc(100% + 5px);right:0;z-index:20;width:min(700px,100%);max-height:60vh;overflow:auto;box-shadow:var(--shadow-dialog);}
+  .calm-inbox .inbox-controls .head{position:static;min-height:40px;margin:0;padding:8px 2px;border:0;}.calm-inbox .inbox-controls .head-title{font-size:16px;}.calm-inbox .inbox-controls .queue-toolbar{margin:4px 0 8px;}.calm-inbox .inbox-controls .filter-row{margin:0;min-height:34px;border-radius:5px;}.calm-inbox .group-label{position:sticky;z-index:4;top:var(--inbox-controls-height,130px);background:var(--bg);padding-block:8px;}.calm-inbox .queue-sidecar{top:calc(var(--inbox-controls-height,130px) + 5px);}
+
 </style>

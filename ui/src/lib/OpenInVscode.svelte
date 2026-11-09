@@ -1,4 +1,5 @@
 <script>
+ import {popoverReturnTarget} from './dom.js';
  import {tick} from 'svelte';
  import {editorRoots,loadEditorRoot,saveEditorRoot,vscodeFileHref} from './vscodeLinks.js';
  let {repo,path,line=1,column=1}=$props();
@@ -8,7 +9,7 @@
  const root=$derived($editorRoots.get(repo) ?? '');
  const href=$derived(vscodeFileHref(root,path,line,column));
  export function open(){if(href)configuredLink?.click();else void configure();}
- async function configure(){returnFocus=document.activeElement;folder=root;error='';configOpen=true;dialog.showModal();await tick();folderInput?.focus();}
+ async function configure(){returnFocus=popoverReturnTarget(document.activeElement);folder=root;error='';configOpen=true;dialog.showModal();await tick();folderInput?.focus();}
  function close(){configOpen=false;dialog.close();returnFocus?.isConnected && returnFocus.focus({preventScroll:true});}
  function save(event){event.preventDefault();try{saveEditorRoot(repo,folder);close();}catch(failure){error=failure.message;}}
  function dismiss(event){event.stopPropagation();if(event.key==='Escape'){event.preventDefault();close();}}
