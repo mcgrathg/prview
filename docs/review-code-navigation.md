@@ -1,6 +1,6 @@
 # Contextual review code — 2026-11-08
 
-With `?organize=1`, ordinary clicks on symbols and import paths open a small symbol card. The review file, URL and panes stay in place. Definition expands a real source excerpt; Usages opens the existing reference search. Open file and Open beside deliberately navigate using the captured immutable source revision. Cmd/Ctrl-click retains direct definition navigation. The upstream default retains modifier-only navigation.
+In the default review workspace, ordinary clicks on symbols and import paths open a small symbol card. The review file, URL and panes stay in place. Definition expands a real source excerpt; Usages opens the existing reference search. Open file and Open beside deliberately navigate using the captured immutable source revision. Cmd/Ctrl-click retains direct definition navigation. The explicit `?legacy=1` fallback retains modifier-only navigation.
 
 The card uses the shared lookup state machine: idle → loading → ready, empty, unavailable or error. Superseding a request, closing the card, navigation or teardown aborts its work. Lookup completion only changes the card; it cannot navigate. Ambiguous candidates require an explicit choice, unavailable excerpts retain the real declaration, and missing definitions remain explicit. No signatures or explanations are generated.
 

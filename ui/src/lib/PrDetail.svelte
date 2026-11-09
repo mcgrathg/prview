@@ -1,4 +1,5 @@
 <script>
+  import { reviewMode } from "./reviewMode.js";
   import { createActor } from "xstate";
   import { createReviewConfirmation } from "./reviewConfirmation.js";
   import { reviewShortcutInfo } from "./reviewShortcutInfo.js";
@@ -130,8 +131,7 @@
 
   let pr = $state.raw(null);
   let actionsRunUrl = $state(null);
-  const organizationEnabled = new URL(location.href).searchParams.get("organize") === "1";
-  const investigationsEnabled = organizationEnabled && new URL(location.href).searchParams.get("investigate") === "1";
+  const { enhanced: organizationEnabled, investigations: investigationsEnabled } = reviewMode(location.search);
   const navigationActor = createActor(reviewNavigationMachine, { input: { review: untrack(() => reviewLocation), apply: applyReviewLocation } }).start();
   let navigationSnapshot = $state(navigationActor.getSnapshot());
   const navigationSubscription = navigationActor.subscribe(next => navigationSnapshot = next);

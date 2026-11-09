@@ -1,6 +1,6 @@
 # Review workspace verification — 2026-11-07
 
-The enhanced Cockpit review supports browser history, independent code panes, native GitHub Viewed state and durable Markdown drafts. Enable it with `?organize=1` before the PR hash route. The outer repository's `COCKPIT_ADOPTION.md` owns launch instructions; Beads owns the roadmap and completion status.
+The enhanced Cockpit review supports browser history, independent code panes, native GitHub Viewed state and durable Markdown drafts. It is the default workspace. Existing `?organize=1` links remain valid; `?legacy=1` before the PR hash route selects the original Cockpit layout. The outer repository's `COCKPIT_ADOPTION.md` owns launch instructions; Beads owns the roadmap and completion status.
 
 ## Review behavior
 

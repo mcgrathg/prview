@@ -1,4 +1,5 @@
 <script>
+  import { reviewMode } from "./lib/reviewMode.js";
   import CollapsibleSidebar from "./lib/CollapsibleSidebar.svelte";
   import { parseReviewRoute } from "./lib/reviewRoute.js";
   import { REVIEW_NAVIGATION_EVENT } from "./lib/reviewHistory.js";
@@ -49,7 +50,7 @@
   let appSidebar = $state(null);
   let releaseNotes;
   let changelogUnread=$state(false);
-  const collapsibleNavigation = new URL(location.href).searchParams.get("organize") === "1";
+  const { enhanced: collapsibleNavigation } = reviewMode(location.search);
 
   function parseRoute(hash) {
     const detail = parseReviewRoute(hash);

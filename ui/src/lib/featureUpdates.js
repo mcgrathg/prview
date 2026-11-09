@@ -152,6 +152,15 @@ export const FEATURE_UPDATES = [
       { title: 'Correct reasons for the selected mode', body: 'Original, Changed lines and Import flow explain their own policies. Ranks still cover all changed files before filters, folder grouping or visibility rules. The sorting algorithm is unchanged.' },
     ],
   },
+  {
+    version: 1794205255741,
+    title: 'Enhanced prview is now the default',
+    summary: 'Ordinary PR links open the complete review workspace without an extra URL flag.',
+    howToTry: 'Open or refresh a normal PR link. Review order, collapsible rails, symbol cards, panes and direct Unified/Split controls are available. Existing organize=1 links still work. Use ?legacy=1 before the # route for the original Cockpit layout.',
+    changes: [
+      { title: 'One normal workspace', body: 'The app navigation and PR review share the same default-mode policy. Repository investigations still require investigate=1; legacy=1 takes precedence over both older and preview flags.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';
