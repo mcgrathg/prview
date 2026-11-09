@@ -17,6 +17,8 @@
   import Kbd from "./Kbd.svelte";
   import FileFind from "./FileFind.svelte";
   import { matchRuns, positionRanges, queryRanges } from "./matchRuns.js";
+  import SearchMatch from './SearchMatch.svelte';
+  import {searchResultLines,searchResultCommand} from './searchResults.js';
   import OpenInVscode from './OpenInVscode.svelte';
   import SymbolCard from './SymbolCard.svelte';
   import { symbolRequest } from './symbolContext.js';
@@ -25,7 +27,7 @@
   import { columnWithin, createDefinitionHover, tokenAtPoint, wordAtPoint } from "./wordAtPoint.js";
 
   // With `hotkeys` off, Cmd+P and Cmd+Shift+F only switch modes once open; the owner opens it through `activate`.
-  let { repo, headSha, headRef, onOpenSymbol = null, context = "", fileFilter = "all", changedFiles = [], onOpenChangedFile, onOpenHistory = null, onBack = null, reviewLocation = null, onReviewNavigate = null, definitionContext = null, directCodeLinks = false, onLookupReferences = null, hotkeys = true, open = $bindable(false) } = $props();
+  let { repo, headSha, headRef, onOpenSymbol = null, onOpenBeside = null, context = "", fileFilter = "all", changedFiles = [], onOpenChangedFile, onOpenHistory = null, onBack = null, reviewLocation = null, onReviewNavigate = null, definitionContext = null, directCodeLinks = false, onLookupReferences = null, hotkeys = true, open = $bindable(false) } = $props();
 
   const definitionHover = createDefinitionHover(() => view, () => directCodeLinks);
   $effect(() => () => definitionHover.destroy());
@@ -90,7 +92,7 @@
     if (shownPath && filesStatus !== "ok") return [];
     if (mode === "search") {
       const rows = shownPath ? matches.filter((m) => shownPath(m.path)) : matches;
-      return rows.map((m) => ({ path: m.path, line: m.line, text: m.text }));
+      return rows.map((m) => ({ path: m.path, line: m.line, text: m.text, changed: directCodeLinks && changedFiles.some(file => file.path === m.path) }));
     }
     const q = query.trim();
     const paths = shownPath ? filePaths.filter(shownPath) : filePaths;
@@ -466,7 +468,7 @@
     if (!r) return;
     selected = index;
     if (r.changed) {
-      onOpenChangedFile(r.path);
+      onOpenChangedFile(r.path, r.line);
       close(false);
       return;
     }
@@ -528,12 +530,13 @@
     if (action === 'inspect') { inspectSymbol(e, {symbol:token.word,path:view.path,position}); return; }
     if (position && reviewLocation?.view === "source" && reviewLocation.file === view.path) onReviewNavigate?.({ line: position.line }, "replace");
     if (action === "references") onLookupReferences(token.word, view.path, position);
+    else if (directCodeLinks) inspectSymbol(e,{symbol:token.word,path:view.path,position},false,'open');
     else lookupDefinition(token.word, view.path, false, position);
   }
 
-  function inspectSymbol(event, target, keyboard = false) {
+  function inspectSymbol(event, target, keyboard = false, intent = 'inspect') {
     const origin = reviewLocation?.view === 'source' && reviewLocation.file === target.path ? reviewLocation : {rev:headSha,base:reviewLocation?.base};
-    symbolCard?.inspect(event, symbolRequest(target.symbol, target.path, target.position, {repo, headRef, ...origin, view:'source'}), keyboard);
+    symbolCard?.inspect(event, symbolRequest(target.symbol, target.path, target.position, {repo, headRef, ...origin, view:'source'}), keyboard, intent);
   }
   function onEditorContext(e) {
     if (view && directCodeLinks && e.target.closest('.pl-code')) {
@@ -592,7 +595,9 @@
       else if (e.key === "ArrowUp") move(-1);
       else if (e.key === "j" && e.target !== inputEl) move(1);
       else if (e.key === "k" && e.target !== inputEl) move(-1);
-      else if (e.key === "Enter") openCurrent();
+      else if (directCodeLinks && searchResultCommand(e,e.target===inputEl)==='beside' && onOpenBeside && current) { const entry=current; close(false); onOpenBeside(entry); }
+      else if (directCodeLinks && searchResultCommand(e,e.target===inputEl)==='preview' && e.target!==inputEl) editorEl?.focus({preventScroll:true});
+      else if (e.key === "Enter" && !e.isComposing) openCurrent();
       else {
         if (prefs.fileFinderEnabled && !meta && !e.altKey) e.stopImmediatePropagation();
         return;
@@ -649,6 +654,7 @@
         {:else if results.length}{selected + 1}/{results.length}
         {:else if (mode === "search" ? query.trim() : true)}no matches{/if}
       </div>
+      {#if directCodeLinks}<div class="ts-count">↑↓ preview · Space focus preview · Enter open · ⌘/Ctrl+Enter beside</div>{/if}
       <div class="ts-list" onmousemove={trackMouse}>
         {#each groups as group (group.path)}
           <div class="ts-group-head mono" title={group.path}>
@@ -665,8 +671,13 @@
               class:active={item.index === selected}
               onmouseenter={(e) => onItemHover(e, item.index)}
               onclick={() => openCurrent(item.index)}
+              onfocus={() => selected=item.index}
+              data-path={item.path}
+              data-line={item.line}
             >
-              {#if item.line != null}
+              {#if directCodeLinks && mode==='search' && item.line != null}
+                <span class="ts-search-match"><SearchMatch entry={item} query={matchedQuery} rows={item.index===selected ? searchResultLines(item,previews.get(item.path)?.lines) : null} /></span>
+              {:else if item.line != null}
                 <span class="ts-ln">{item.line}</span>
                 <span class="ts-snip"
                   >{#if prefs.fileFinderEnabled && mode === "search"}{#each snippetRuns(item, toks) as run}<span class:ts-hit={run.hit} style:color={run.color}>{run.content}</span>{/each}{:else if toks}{#each toks as t}<span style="color:{t.color}">{t.content}</span>{/each}{:else}{item.text}{/if}</span
@@ -737,7 +748,7 @@
 {/if}
 
 {#if directCodeLinks && open}<SymbolCard bind:this={symbolCard} context={JSON.stringify([repo,headSha,view?.path,view?.line,definitionContext])} onOpen={onOpenSymbol} onReferences={onLookupReferences} />{/if}
-<CodeActionsMenu bind:this={codeMenu} onInspect={directCodeLinks ? inspectSymbol : null} onDefinition={(symbol, path, position) => lookupDefinition(symbol, path, false, position)} onReferences={onLookupReferences} onHistory={onOpenHistory ? (path, symbol) => { close(); onOpenHistory(path, symbol); } : null} />
+<CodeActionsMenu {repo} bind:this={codeMenu} onInspect={directCodeLinks ? inspectSymbol : null} onDefinition={(symbol, path, position) => lookupDefinition(symbol, path, false, position)} onReferences={onLookupReferences} onHistory={onOpenHistory ? (path, symbol) => { close(); onOpenHistory(path, symbol); } : null} />
 
 <style>
   .ts-root {
@@ -877,6 +888,7 @@
     background: var(--panel-raised);
     color: var(--text);
   }
+  .ts-search-match {flex:1;min-width:0;text-align:left;}
   .ts-count {
     padding: 6px 16px;
     font-size: 11px;

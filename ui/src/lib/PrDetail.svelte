@@ -2,7 +2,7 @@
   import { createActor } from "xstate";
   import { createReviewConfirmation } from "./reviewConfirmation.js";
   import { reviewShortcutInfo } from "./reviewShortcutInfo.js";
-  import { normalizeReviewState, referenceDiffLocation, reviewReferenceDestination, buildReviewHash } from "./reviewRoute.js";
+  import { normalizeReviewState, referenceDiffLocation, reviewDefinitionDestination, reviewFileDestination, reviewBesideDestination, reviewReferenceDestination, buildReviewHash } from "./reviewRoute.js";
   import { beginReviewFileDrag, isReviewFileDragging } from "./reviewFileDrag.js";
   import { relatedCandidates } from "../../../shared/review-organization/relationships.ts";
   import { canChangeViewed } from "./reviewViewedGuard.js";
@@ -91,7 +91,7 @@
   import FileHistory from "./FileHistory.svelte";
   import ReviewReferences from "./ReviewReferences.svelte";
   import InvestigationWorkbench from "./InvestigationWorkbench.svelte";
-  import { symbolDestination } from './symbolContext.js';
+  import { symbolDestination, matchesSymbolCaller } from './symbolContext.js';
   import { referenceOrigin } from "./codeReference.js";
   import Telescope from "./Telescope.svelte";
   import ConflictEditor from "./ConflictEditor.svelte";
@@ -155,6 +155,11 @@
     navigationActor.send({ type: 'PATCH', patch: { rev: range?.head ?? pr.headRefOid, base: range?.base ?? pr.baseRefOid, ...patch }, historyMode: mode });
     commitReviewLocation(repo, number, navigationActor.getSnapshot().context.review, mode);
   }
+  function navigateReviewState(state, mode = 'push') {
+    if (!organizationEnabled || !pr) return;
+    navigationActor.send({type:'NAVIGATE',review:{...state,rev:state.rev ?? organizationComparison.head,base:state.base ?? organizationComparison.base},historyMode:mode});
+    commitReviewLocation(repo,number,navigationActor.getSnapshot().context.review,mode);
+  }
   function setReviewLayout(layout) {
     if (workspaceEnabled) { workspace?.updatePane(reviewState.active, { layout }); return; }
     navigationActor.send({ type: 'LAYOUT.SET', layout });
@@ -185,23 +190,16 @@
     const focused = panes.find(p => p.id === active);
     navigateReview({ panes: panes.length ? panes : undefined, active, ...(focused?.file ? { file: focused.file, line: focused.line, side: focused.side, view: focused.view === 'source' ? 'source' : 'diff', layout: focused.layout } : {}) }, mode);
   }
-  async function openResolvedSymbol(definition, request, beside, pane = null) {
+  function openResolvedSymbol(definition, request, beside, pane = null) {
     if (!finishFileEdit()) return;
-    const target = symbolDestination(definition, request);
-    const origin = request.origin;
-    if (workspaceEnabled) {
-      const id = pane?.id ?? reviewState.active;
-      workspace?.focusPane(id);
-      workspace?.updatePane(id, origin, 'replace');
-      await tick();
-      if (beside) workspace?.openFile(target.file, true, target);
-      else workspace?.updatePane(id, target);
-    } else {
-      navigateReview(origin, 'replace');
-      await tick();
-      if (beside) navigateReview({panes:[{id:'p1',...origin,layout:reviewState.layout},{id:'p2',...target,layout:reviewState.layout}],active:'p2',...target});
-      else navigateReview(target);
+    const currentPane = workspaceEnabled ? reviewState.panes.find(item=>item.id===(pane?.id ?? reviewState.active)) : null;
+    const current = currentPane ?? reviewState;
+    if (matchesSymbolCaller(request,current,organizationComparison)) {
+      const caller = {...current,line:request.origin.line,side:request.origin.side};
+      navigateReview(currentPane ? {panes:reviewState.panes.map(item=>item.id===currentPane.id ? caller : item),active:currentPane.id} : {line:caller.line,side:caller.side},'replace');
     }
+    if (beside) openContextBeside(definition,request);
+    else { restoredLocation=''; navigateReviewState(reviewDefinitionDestination(reviewState,definition,request,{...organizationComparison,files:comparisonFiles})); }
   }
   async function followDefinition(symbol, fromPath, position, pane = null) {
     // The return entry names the exact origin, before an asynchronous lookup changes location.
@@ -220,13 +218,12 @@
   function openReference(entry) {
     const destination = reviewReferenceDestination(reviewState, entry, { ...organizationComparison, files: comparisonFiles });
     if (!destination.references?.preview) restoredLocation = '';
-    navigateReview(destination);
+    navigateReviewState(destination);
   }
   function openContextBeside(definition, request) {
     if (!finishFileEdit()) return;
     const target = { ...symbolDestination(definition, request), ...referenceDiffLocation({ rev: request.sha }, definition.path, { ...organizationComparison, files: comparisonFiles }) };
-    if (workspaceEnabled) workspace?.openFile(target.file, true, target);
-    else navigateReview({ panes: [{ id: 'p1', ...reviewState }, { id: 'p2', ...target, layout: reviewState.layout }], active: 'p2', ...target, rev: reviewState.rev, base: reviewState.base });
+    navigateReviewState(reviewBesideDestination(reviewState,{...target,layout:reviewState.layout}));
   }
   function followContextReferences(symbol, path, position) {
     if (!position || !reviewState.references) return;
@@ -2981,10 +2978,10 @@
     if (i >= 0) selectFile(i);
   }
 
-  function openChangedFile(path) {
+  function openChangedFile(path, line = null) {
     if (organizationEnabled) {
-      if (workspaceEnabled) workspace?.openFile(path, false, { rev: organizationComparison.head, base: organizationComparison.base, side: 'right' });
-      else navigateReview({ file: path, line: null, side: 'right', view: 'diff', search: undefined });
+      restoredLocation='';
+      navigateReviewState(reviewFileDestination(reviewState,{file:path,line,view:'diff',side:'right',rev:organizationComparison.head,base:organizationComparison.base}));
       return;
     }
     revealChangedFile(path);
@@ -3774,7 +3771,7 @@
               {:else}<button class="toolbar-btn" onclick={toggleDiffLayout}>{prefs.diffLayout === "split" ? "unified" : "side by side"}</button>{/if}
             </div>
           </div>
-          {#if investigationsEnabled && diffState === 'ready'}{#key `${repo}#${number}`}<div class="investigation-slot"><InvestigationWorkbench bind:this={investigationWorkbench} changedPaths={comparisonFiles.map(file=>file.path)} currentHead={pr.headRefOid} currentBase={pr.baseRefOid} pendingReviewsEnabled={prefs.pendingReviewsEnabled} {pendingReview} {pendingReviewStale} onSubmitDraft={submitFindingDraft} {repo} {number} headRef={pr.headRefName} review={reviewState} restored={reviewLocation?.investigation} onRoute={(investigation,mode)=>navigateReview({investigation},mode)} /></div>{/key}{/if}
+          {#if investigationsEnabled && diffState === 'ready'}{#key `${repo}#${number}`}<div class="investigation-slot"><InvestigationWorkbench onReviewDefinition={(definition,request)=>{if(!finishFileEdit())return;restoredLocation='';navigateReviewState(reviewDefinitionDestination({...reviewState,investigation:undefined},definition,request,{...organizationComparison,files:comparisonFiles}));}} bind:this={investigationWorkbench} changedPaths={comparisonFiles.map(file=>file.path)} currentHead={pr.headRefOid} currentBase={pr.baseRefOid} pendingReviewsEnabled={prefs.pendingReviewsEnabled} {pendingReview} {pendingReviewStale} onSubmitDraft={submitFindingDraft} {repo} {number} headRef={pr.headRefName} review={reviewState} restored={reviewLocation?.investigation} onRoute={(investigation,mode)=>navigateReview({investigation},mode)} /></div>{/key}{/if}
           {#snippet sidebarContents()}
             {#if organizationEnabled && diffState === "ready" && comparisonFiles.length}
               <ReviewOrganization bind:this={organizationPanel} comparison={organizationComparison} nativeFiles={comparisonFiles} {selectedPath} onChange={receiveOrganization} onSelect={path => { openChangedFile(path); reviewSidebar?.dismiss(); }} onOpenBeside={path => { openBeside(path); reviewSidebar?.dismiss(); }} docking={workspaceEnabled} fileHref={path => buildReviewHash(repo, number, { ...reviewState, file: path, view: "diff", line: null, rev: organizationComparison.head, base: organizationComparison.base })} restoredControls={reviewState.controls} onControlsChange={(controls, mode) => navigateReview({ controls }, mode)} />
@@ -4765,7 +4762,7 @@
       <KeyBar keys={organizationEnabled ? footerCommands : tab === "files" ? filesKeys : tab === "agents" || tab === "actions" ? tabKeys : conversationKeys} onActivate={organizationEnabled ? item => runReviewShortcut(item.key) : null} />
     {/if}
 
-    {#if !(investigationsEnabled && reviewState.investigation)}<Telescope bind:this={telescope} onOpenSymbol={openResolvedSymbol} onLookupReferences={organizationEnabled ? followReferences : null} directCodeLinks={organizationEnabled} reviewLocation={organizationEnabled ? workspaceEnabled ? { ...reviewState, view: 'diff' } : reviewState : null} onReviewNavigate={organizationEnabled ? navigatePane : null} {repo} headSha={organizationEnabled ? searchRevision : pr.headRefOid} definitionContext={organizationEnabled ? definitionContext : null} headRef={pr.headRefName} fileFilter={organizationEnabled ? "all" : fileFilter} changedFiles={organizationEnabled ? workspaceEnabled && searchRevision !== organizationComparison.head ? [] : comparisonFiles : files} onOpenChangedFile={openChangedFile} onOpenHistory={openFileHistory} bind:open={telescopeOpen} />{/if}
+    {#if !(investigationsEnabled && reviewState.investigation)}<Telescope bind:this={telescope} onOpenBeside={organizationEnabled ? entry=>openContextBeside({path:entry.path,line:entry.line ?? 1},{sha:searchRevision,origin:{base:organizationComparison.base}}) : null} onOpenSymbol={openResolvedSymbol} onLookupReferences={organizationEnabled ? followReferences : null} directCodeLinks={organizationEnabled} reviewLocation={organizationEnabled ? workspaceEnabled ? { ...reviewState, view: 'diff' } : reviewState : null} onReviewNavigate={organizationEnabled ? navigatePane : null} {repo} headSha={organizationEnabled ? searchRevision : pr.headRefOid} definitionContext={organizationEnabled ? definitionContext : null} headRef={pr.headRefName} fileFilter={organizationEnabled ? "all" : fileFilter} changedFiles={organizationEnabled ? workspaceEnabled && searchRevision !== organizationComparison.head ? [] : comparisonFiles : files} onOpenChangedFile={openChangedFile} onOpenHistory={openFileHistory} bind:open={telescopeOpen} />{/if}
     {#if organizationEnabled && reviewState.references}<ReviewReferences {repo} comparison={{...organizationComparison,files:comparisonFiles}} headRef={pr.headRefName} origin={reviewState.references} onSelect={openReference} hrefFor={referenceHref} onOpenBeside={openContextBeside} onContextReferences={followContextReferences} onPreviewClose={()=>navigateReview({references:{...reviewState.references,preview:undefined}})} onClose={() => navigateReview({ references: undefined })} />{/if}
     <FileHistory
       {repo}

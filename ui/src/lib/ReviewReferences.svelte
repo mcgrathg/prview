@@ -12,7 +12,7 @@
   let snapshot = $state(actor.getSnapshot());
   const subscription = actor.subscribe(next => snapshot = next);
   $effect(() => () => { subscription.unsubscribe(); actor.stop(); });
-  const identity = $derived(JSON.stringify([repo,headRef,origin.path,origin.symbol,origin.line,origin.character,origin.rev,origin.base]));
+  const identity = $derived(JSON.stringify([repo,headRef,origin.path,origin.symbol,origin.line,origin.character,origin.rev,origin.base,origin.kind]));
   const previewKey=$derived(JSON.stringify([identity,origin.preview]));
   const preview=$derived(origin.preview ? {file:origin.preview.path,line:origin.preview.line,rev:origin.rev,base:origin.base,side:'right',view:'source'} : null);
   const changedPaths=$derived(new Set((comparison.files ?? []).flatMap(file=>[file.path,file.previousPath].filter(Boolean))));
@@ -26,7 +26,7 @@
   function lookupDefinition(symbol,path,position){if(!position || !preview)return;definitionActor.send({type:'LOAD',request:{repo,headRef,symbol,path,...position,rev:origin.rev,previewKey}});}
   function openSymbol(definition,request,beside){if(beside)onOpenBeside?.(definition,request);else onSelect(definition);}
 
-  $effect(() => { identity; untrack(() => { filter = ''; actor.send({ type: 'LOAD', request: { repo, headRef, ...origin } }); }); });
+  $effect(() => { identity; untrack(() => { filter = ''; if(origin.kind==='context')actor.send({type:'CANCEL'});else actor.send({ type: 'LOAD', request: { repo, headRef, ...origin } }); }); });
   onMount(() => closeButton?.focus({ preventScroll: true }));
   const references = $derived(snapshot.context.result?.references ?? []);
   const groups = $derived.by(() => {
@@ -39,12 +39,12 @@
     return [...groups];
   });
 </script>
-<aside class="reference-panel" data-code-overlay aria-label="Symbol references" onkeydown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); preview ? onPreviewClose() : onClose(); } }}>
-  <header><div><strong>References · {origin.symbol}</strong><small>{repo} · {origin.rev.slice(0, 8)}</small></div><button bind:this={closeButton} aria-label="Close references" onclick={onClose}>×</button></header>
+<aside class="reference-panel" data-code-overlay aria-label="Symbol references" onkeydown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); preview && origin.kind!=='context' ? onPreviewClose() : onClose(); } }}>
+  <header><div><strong>{origin.kind==='context' ? 'Code context' : 'References'} · {origin.symbol}</strong><small>{repo} · {origin.rev.slice(0, 8)}</small></div><button bind:this={closeButton} aria-label="Close references" onclick={onClose}>×</button></header>
   <div class="reference-origin"><button onclick={() => onSelect({ path: origin.path, line: origin.line, character: origin.character })}>Return to caller</button><span title={origin.path}>{origin.path}:{origin.line}</span></div>
   {#if preview}
     <section class="reference-context" aria-label="Repository file context">
-      <div class="context-heading"><button onclick={onPreviewClose}>← Back to references</button><strong>{preview.file}:{preview.line}</strong><small>{changedPaths.has(preview.file) ? 'Different revision from the displayed PR comparison' : 'Not changed in this PR'} · Read-only · {origin.rev.slice(0,8)}</small></div>
+      <div class="context-heading">{#if origin.kind==='context'}<button onclick={onClose}>Close context</button>{:else}<button onclick={onPreviewClose}>← Back to references</button>{/if}<strong>{preview.file}:{preview.line}</strong><small>{changedPaths.has(preview.file) ? 'Different revision from the displayed PR comparison' : 'Not changed in this PR'} · Read-only · {origin.rev.slice(0,8)}</small></div>
       {#if definitionSnapshot.matches('loading') || definitionSnapshot.matches('retrying')}<p role="status">Finding definition…</p>{:else if definitionSnapshot.matches('error') || definitionSnapshot.matches('unavailable') || definitionSnapshot.matches('empty')}<p role="status">{definitionSnapshot.context.error || 'No definition available for this source.'}</p>{:else if definitionSnapshot.matches('ready')}<p role="status">Multiple candidates; inspect the symbol card to choose a definition.</p>{/if}
       <div class="workspace-scroll"><WorkspaceSource {repo} {headRef} pane={preview} onNavigate={patch=>onSelect({path:preview.file,line:patch.line,character:0})} onDefinition={lookupDefinition} onReferences={onContextReferences} onOpenSymbol={openSymbol} /></div>
     </section>

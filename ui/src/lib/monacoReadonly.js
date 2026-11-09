@@ -31,7 +31,7 @@ monaco.languages.registerHoverProvider({scheme:'prview'}, {provideHover:async(mo
 }});
 monaco.languages.registerDocumentSymbolProvider({scheme:'prview'}, {displayName:'Pinned repository source',provideDocumentSymbols:async(model,token)=>symbols((await insight(model,'outline',null,token))?.outline)});
 function language(path) {if(/\.svelte$/.test(path))return 'html';if(/\.[cm]?tsx?$/.test(path))return 'typescript';if(/\.[cm]?jsx?$/.test(path))return 'javascript';if(/\.json$/.test(path))return 'javascript';if(/\.md$/.test(path))return 'markdown';return 'plaintext';}
-export function createReadonlySource(container,{repo,revision,base,headRef,path,content,line=1,onInspect,onDefinition,onReferences,onSemantic,onNavigate,onCommand,onAnalysis}) {
+export function createReadonlySource(container,{repo,revision,base,headRef,path,content,line=1,onInspect,onDefinition,onReferences,onSemantic,onNavigate,onCommand,onVscode,onAnalysis}) {
   const uri=monaco.Uri.from({scheme:'prview',authority:'source',path:`/${repo}/${revision}/${path}`,query:`pane=${++sequence}`});
   const model=monaco.editor.createModel(content,language(path),uri);publishModelCount();
   let session,editor;const subscriptions=[];
@@ -47,10 +47,12 @@ export function createReadonlySource(container,{repo,revision,base,headRef,path,
   function point() {const position=editor.getPosition(),visible=editor.getScrolledVisiblePosition(position),rect=container.getBoundingClientRect(),scale=rect.width/container.clientWidth || 1;
     return {clientX:rect.left+(visible?.left ?? 12)*scale,clientY:rect.top+((visible?.top ?? 12)+(visible?.height ?? 16))*scale,returnFocus:container.querySelector('textarea')};}
   function action(id,label,run,keybindings,order=1) {subscriptions.push(editor.addAction({id:`prview.${id}`,label,keybindings,contextMenuGroupId:'navigation',contextMenuOrder:order,run}));}
-  action('inspect','Inspect symbol',()=>{const target=tokenAt();if(target)onInspect?.(point(),target,true);},[],1);
+  action('inspect','Symbol card',()=>{const target=tokenAt();if(target)onInspect?.(point(),target,true);},[],1);
   action('info','Symbol info',()=>editor.getAction('editor.action.showHover')?.run(),[],1.5);
-  action('definition','Inspect definition',()=>{const target=tokenAt();if(target)onDefinition?.(target.symbol,path,target.position);},[monaco.KeyCode.F12],2);
-  action('references','Find usages',()=>{const target=tokenAt();if(target)onReferences?.(target.symbol,path,target.position);},[monaco.KeyMod.Shift|monaco.KeyCode.F12],3);
+  action('definition','Preview definition',()=>{const target=tokenAt();if(target)onInspect?.(point(),target,true,'preview');},[monaco.KeyCode.F12],2);
+  action('references','Usages',()=>{const target=tokenAt();if(target)onReferences?.(target.symbol,path,target.position);},[monaco.KeyMod.Shift|monaco.KeyCode.F12],3);
+  for(const [intent,label] of [['open','Open in review'],['beside','Open beside']])action(intent,label,()=>{const target=tokenAt();if(target)onInspect?.(point(),target,true,intent);},[],intent==='open' ? 3.4 : 3.5);
+  if(onVscode)action('vscode','VS Code',()=>{const position=editor.getPosition();if(position)onVscode({line:position.lineNumber,character:position.column-1});},[],3.8);
   for(const [kind,label] of [['type','Type definition'],['implementation','Find implementations']])action(kind,label,()=>{const target=tokenAt();if(target && /^[A-Za-z_$][\w$]*$/.test(target.symbol))onSemantic?.(kind,target.symbol,path,target.position);},[],4);
   action('outline','File symbols',()=>onSemantic?.('outline','',path,{line:1,character:0}),[monaco.KeyMod.CtrlCmd|monaco.KeyMod.Shift|monaco.KeyCode.KeyO],5);
   if(onCommand){action('files','Find repository file',()=>onCommand('files'),[monaco.KeyMod.CtrlCmd|monaco.KeyCode.KeyP],6);action('search','Search repository',()=>onCommand('text'),[monaco.KeyMod.CtrlCmd|monaco.KeyMod.Shift|monaco.KeyCode.KeyF],7);}
@@ -63,7 +65,8 @@ export function createReadonlySource(container,{repo,revision,base,headRef,path,
     if(!mode){if(original.detail>1 || selected)onInspect?.(null,null);return;}
     const target=tokenAt(event.target.position);if(!target)return;original.preventDefault();
     if(mode==='inspect')onInspect?.(original,target,false);
-    else (mode==='references' ? onReferences : onDefinition)?.(target.symbol,path,target.position);
+    else if(mode==='definition')onInspect?.(original,target,false,'open');
+    else onReferences?.(target.symbol,path,target.position);
   }));
   return {focus:()=>editor.focus(),setLine(value){editor.setPosition({lineNumber:Math.min(value,model.getLineCount()),column:1});editor.revealLineInCenter(value);},setTheme(name){monaco.editor.setTheme(name==='light' ? 'vs' : 'vs-dark');},
     captureEvidence(){const selection=editor.getSelection();if(!selection)return null;return sourceEvidence({repo,file:path,rev:revision,base,lines:model.getLinesContent(),startLine:selection.startLineNumber,endLine:selection.endLineNumber,endAtLineStart:selection.endColumn===1});},

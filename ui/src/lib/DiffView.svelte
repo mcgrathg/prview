@@ -176,11 +176,12 @@
     e.preventDefault();
     const position = linePosition(lineEl, token);
     if (action === 'inspect') inspectSymbol(e, {symbol:token.word,path:file.path,position});
+    else if (action==='definition' && enhancedReview) inspectSymbol(e,{symbol:token.word,path:file.path,position},false,'open');
     else (action === "references" ? onLookupReferences : onLookupDefinition)(token.word, file.path, position);
   }
 
-  function inspectSymbol(event, target, keyboard = false) {
-    symbolCard?.inspect(event, symbolRequest(target.symbol, target.path, target.position, {repo, headRef, rev:headSha, base:baseSha, view:'diff'}), keyboard);
+  function inspectSymbol(event, target, keyboard = false, intent = 'inspect') {
+    symbolCard?.inspect(event, symbolRequest(target.symbol, target.path, target.position, {repo, headRef, rev:headSha, base:baseSha, view:'diff'}), keyboard, intent);
   }
 
   function renderedFileBody(section) {
@@ -2664,7 +2665,7 @@
 </div>
 
 {#if enhancedReview}<CommitContext bind:this={commitContext} {repo} head={headSha} base={baseSha} {headRef} /><SymbolCard bind:this={symbolCard} context={JSON.stringify([repo, headSha, baseSha, diffIdentity, layout])} onOpen={onOpenSymbol} onReferences={onLookupReferences} />{/if}
-<CodeActionsMenu bind:this={codeMenu} onInspect={enhancedReview ? inspectSymbol : null} onDefinition={onLookupDefinition} onReferences={onLookupReferences} onHistory={onOpenHistory} />
+<CodeActionsMenu {repo} bind:this={codeMenu} onInspect={enhancedReview ? inspectSymbol : null} onDefinition={onLookupDefinition} onReferences={onLookupReferences} onHistory={onOpenHistory} />
 
 <style>
   .commit-context-btn {opacity:0;flex-shrink:0;display:flex;align-items:center;justify-content:center;width:24px;height:24px;padding:3px;border:0;border-radius:4px;background:transparent;color:var(--text-dim);cursor:pointer;}

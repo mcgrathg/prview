@@ -122,6 +122,17 @@ export const FEATURE_UPDATES = [
       { title: 'Know which revision you are reading', body: 'Original-side references use original diff line numbers. Files outside the displayed comparison stay pinned to their requested revision in the rail.' },
     ],
   },
+  {
+    version: 1794183582666,
+    title: 'Search with context and follow code consistently',
+    summary: 'Selected search results show nearby code and highlighted matches. Diff and source viewers share the same code actions.',
+    howToTry: 'Search repository text, then use the arrow keys to select a result. In the repository rail, Space previews, Enter opens and Cmd/Ctrl+Enter keeps it beside the working file. Right-click a symbol for Preview definition, Usages, Open in review, Open beside and VS Code.',
+    changes: [
+      { title: 'Compact results, useful context', body: 'Only the selected text result expands to nearby numbered lines. Matching text follows literal smart-case search. Revisited source uses a small pinned-file cache, and obsolete context requests are canceled.' },
+      { title: 'One set of code actions', body: 'Preview definition stays in the symbol card; F12 uses the same preview in the repository editor. Open in review takes changed definitions to their PR diff and other definitions to read-only rail context. Open beside preserves existing code panes, and Back restores the prior review or investigation.' },
+      { title: 'Local editor access', body: 'VS Code is available from symbol cards and code menus, using the existing per-repository checkout setting. It opens local working-tree code, which can differ from the pinned PR revision.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';

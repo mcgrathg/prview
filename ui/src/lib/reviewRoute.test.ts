@@ -143,3 +143,27 @@ test('legacy source destinations return to the PR diff before showing external r
   expect(changed).toMatchObject({ file: 'src/change.ts', line: 21, view: 'diff' });
   expect(changed.references.preview).toBeUndefined();
 });
+
+test('definition actions use PR diffs for changed paths and code context for other files and imports',async()=>{
+ const {reviewDefinitionDestination}=await import('./reviewRoute.js');
+ const head='a'.repeat(40),base='b'.repeat(40),state=normalizeReviewState({file:'src/caller.ts',line:5,rev:head,base});
+ const request={symbol:'../helpers.ts',path:'src/caller.ts',sha:head,position:{line:5,character:10}};
+ const comparison={head,base,files:[{path:'src/change.ts'}]};
+ const changed=reviewDefinitionDestination(state,{path:'src/change.ts',line:8},request,comparison);
+ expect(changed).toMatchObject({file:'src/change.ts',line:8,view:'diff',rev:head,base});expect(changed.references).toBeUndefined();
+ const context=reviewDefinitionDestination(state,{path:'helpers.ts',line:10},request,comparison);
+ expect(context.file).toBe('src/caller.ts');expect(context.references).toMatchObject({kind:'context',symbol:'../helpers.ts',rev:head,preview:{path:'helpers.ts',line:10}});
+ expect(parseReviewRoute(buildReviewHash('owner/repo',1,context)).review).toEqual(context);
+ expect(reviewDefinitionDestination(state,{path:'../outside',line:8},request,comparison)).toEqual(state);
+ const original=reviewDefinitionDestination(state,{path:'src/old.ts',line:4},{...request,sha:base},{head,base,files:[{path:'src/new.ts',previousPath:'src/old.ts'}]});
+ expect(original).toMatchObject({file:'src/new.ts',side:'left',line:4,view:'diff',rev:head,base});
+});
+test('beside actions preserve existing panes and global comparison while pinning original source',async()=>{
+ const {reviewBesideDestination}=await import('./reviewRoute.js');
+ const head='a'.repeat(40),base='b'.repeat(40),state=normalizeReviewState({file:'src/caller.ts',line:5,rev:head,base});
+ const target={file:'src/context.ts',line:23,rev:base,base,view:'source'};
+ const next=reviewBesideDestination(state,target);
+ expect(next.rev).toBe(head);expect(next.base).toBe(base);expect(next.panes[0]).toMatchObject({file:state.file,line:5,rev:head,view:'diff'});expect(next.panes[1]).toMatchObject(target);
+ const third=reviewBesideDestination(next,{...target,file:'other.ts'});expect(third.panes.slice(0,2)).toEqual(next.panes);expect(new Set(third.panes.map(p=>p.id)).size).toBe(3);
+ expect(reviewBesideDestination(state,{...target,file:'../bad'})).toEqual(state);
+});

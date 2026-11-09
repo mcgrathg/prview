@@ -68,3 +68,14 @@ test('a superseded render invocation aborts and cannot complete the newer locati
   await waitFor(actor, s => s.matches('ready'));
   actor.stop();
 });
+
+test('a full definition destination clears overlays and search instead of merging their old state back',async()=>{
+ const {reviewDefinitionDestination}=await import('./reviewRoute.js');
+ const head='a'.repeat(40),base='b'.repeat(40),review={file:'caller.ts',line:7,rev:head,base,search:{mode:'search',query:'work'},investigation:{id:'i1',location:{file:'caller.ts',line:7,rev:head,base}},references:{kind:'context',path:'caller.ts',symbol:'work',line:7,character:0,rev:head,base,preview:{path:'other.ts',line:1,character:0}}};
+ const actor=createActor(reviewNavigationMachine,{input:{review}}).start();
+ const destination=reviewDefinitionDestination({...actor.getSnapshot().context.review,investigation:undefined},{path:'changed.ts',line:20},{path:'caller.ts',symbol:'work',sha:head,position:{line:7,character:0}},{head,base,files:[{path:'changed.ts'}]});
+ actor.send({type:'NAVIGATE',review:destination});
+ expect(actor.getSnapshot().context.review).toMatchObject({file:'changed.ts',line:20,view:'diff',rev:head,base});
+ expect(actor.getSnapshot().context.review.investigation).toBeUndefined();expect(actor.getSnapshot().context.review.references).toBeUndefined();expect(actor.getSnapshot().context.review.search).toBeUndefined();
+ actor.send({type:'RESTORE',review});expect(actor.getSnapshot().context.review.investigation.id).toBe('i1');actor.stop();
+});

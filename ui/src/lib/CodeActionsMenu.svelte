@@ -1,8 +1,10 @@
 <script>
   import { tick } from 'svelte';
   import { createActor, assign, setup } from 'xstate';
+  import OpenInVscode from './OpenInVscode.svelte';
+  import {isPromptDialogOpen} from './dom.js';
   import { REVIEW_NAVIGATION_EVENT } from './reviewHistory.js';
-  let { onDefinition, onReferences, onHistory = null, onInspect = null } = $props();
+  let { repo = null, onDefinition, onReferences, onHistory = null, onInspect = null } = $props();
   let menu;
   let returnFocus;
   const machine = setup({}).createMachine({ id: 'code-actions', initial: 'closed', context: { target: null, extras: [], x: 0, y: 0 },
@@ -26,18 +28,23 @@
     if (!menu || actor.getSnapshot().context.target !== target) return;
     const rect = menu.getBoundingClientRect();
     actor.send({ type: 'POSITION', x: Math.max(8, Math.min(event.clientX, innerWidth - rect.width - 8)), y: Math.max(8, Math.min(event.clientY, innerHeight - rect.height - 8)) });
-    menu.querySelector('button:not(:disabled)')?.focus();
+    menu.querySelector('button:not(:disabled),a[href]')?.focus();
+  }
+  function inspect(intent) {
+    const event={clientX:snapshot.context.x,clientY:snapshot.context.y,returnFocus};
+    run(target=>onInspect(event,target,true,intent));
   }
   function run(action) { const target = actor.getSnapshot().context.target; actor.send({ type: 'CLOSE' }); action(target); }
   $effect(() => {
     if (!snapshot.matches('open')) return;
     const close = () => actor.send({ type: 'CLOSE' });
-    const outside = event => { if (!menu?.contains(event.target)) close(); };
+    const outside = event => { if (!isPromptDialogOpen() && !menu?.contains(event.target)) close(); };
     const keys = event => {
-      if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); close(); }
+      if (isPromptDialogOpen()) return;
+      if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); close(); if(returnFocus?.isConnected)returnFocus.focus({preventScroll:true}); }
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
-        const buttons = [...menu.querySelectorAll('button:not(:disabled)')];
+        const buttons = [...menu.querySelectorAll('button:not(:disabled),a[href]')].filter(node=>node.getClientRects().length && !node.closest('dialog:not([open])'));
         const index = buttons.indexOf(document.activeElement);
         buttons[(index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus();
       }
@@ -55,9 +62,15 @@
   {@const target = snapshot.context.target}
   <div use:portal bind:this={menu} class="code-actions" data-code-overlay role="menu" aria-label={`Code actions for ${target.symbol}`} style:left={`${snapshot.context.x}px`} style:top={`${snapshot.context.y}px`}>
     <strong>{target.symbol}</strong>
-    {#if onInspect}<button role="menuitem" onclick={() => { const event = {clientX:snapshot.context.x,clientY:snapshot.context.y,returnFocus}; run(value => onInspect(event,value,true)); }}>Inspect symbol</button>{/if}
-    <button role="menuitem" onclick={() => run(value => onDefinition?.(value.symbol, value.path, value.position))}>Open definition file</button>
-    <button role="menuitem" disabled={!onReferences || !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(target.symbol)} onclick={() => run(value => onReferences(value.symbol, value.path, value.position))}>Find references <small>Alt-click</small></button>
+    {#if onInspect}
+      <button role="menuitem" onclick={()=>inspect('inspect')}>Symbol card</button>
+      <button role="menuitem" onclick={()=>inspect('preview')}>Preview definition</button>
+      <button role="menuitem" disabled={!onReferences || !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(target.symbol)} onclick={() => run(value => onReferences(value.symbol, value.path, value.position))}>Usages <small>Alt-click</small></button>
+      <button role="menuitem" onclick={()=>inspect('open')}>Open in review</button>
+      <button role="menuitem" onclick={()=>inspect('beside')}>Open beside</button>
+    {:else}<button role="menuitem" disabled={!onDefinition} onclick={() => run(value => onDefinition?.(value.symbol, value.path, value.position))}>Open definition file</button>{/if}
+    {#if !onInspect}<button role="menuitem" disabled={!onReferences || !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(target.symbol)} onclick={() => run(value => onReferences(value.symbol, value.path, value.position))}>Find references <small>Alt-click</small></button>{/if}
+    {#if onInspect && repo}<OpenInVscode {repo} path={target.path} line={target.position?.line ?? 1} column={(target.position?.character ?? 0)+1} />{/if}
     {#if onHistory}<button role="menuitem" onclick={() => run(value => onHistory(value.path, value.symbol))}>Mention history</button>{/if}
     {#each snapshot.context.extras as action}<button role="menuitem" onclick={() => run(() => action.run())}>{action.label}</button>{/each}
   </div>

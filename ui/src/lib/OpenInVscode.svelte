@@ -2,18 +2,19 @@
  import {tick} from 'svelte';
  import {editorRoots,loadEditorRoot,saveEditorRoot,vscodeFileHref} from './vscodeLinks.js';
  let {repo,path,line=1,column=1}=$props();
- let dialog,folderInput,folder=$state(''),error=$state(''),configOpen=$state(false),returnFocus;
+ let configuredLink,dialog,folderInput,folder=$state(''),error=$state(''),configOpen=$state(false),returnFocus;
  const titleId=$props.id();
  $effect(()=>{loadEditorRoot(repo);});
  const root=$derived($editorRoots.get(repo) ?? '');
  const href=$derived(vscodeFileHref(root,path,line,column));
+ export function open(){if(href)configuredLink?.click();else void configure();}
  async function configure(){returnFocus=document.activeElement;folder=root;error='';configOpen=true;dialog.showModal();await tick();folderInput?.focus();}
  function close(){configOpen=false;dialog.close();returnFocus?.isConnected && returnFocus.focus({preventScroll:true});}
  function save(event){event.preventDefault();try{saveEditorRoot(repo,folder);close();}catch(failure){error=failure.message;}}
  function dismiss(event){event.stopPropagation();if(event.key==='Escape'){event.preventDefault();close();}}
 </script>
 <span class="vscode-control">
- {#if href}<a {href} title={`Open local checkout in VS Code · ${path}:${line}. Local code may differ from this PR.`} aria-label={`Open ${path} in VS Code`}>VS Code ↗</a><button class="configure" aria-label={`Change VS Code checkout folder for ${repo}`} title="Change local checkout folder" onclick={configure}>⋯</button>
+ {#if href}<a bind:this={configuredLink} {href} title={`Open local checkout in VS Code · ${path}:${line}. Local code may differ from this PR.`} aria-label={`Open ${path} in VS Code`}>VS Code ↗</a><button class="configure" aria-label={`Change VS Code checkout folder for ${repo}`} title="Change local checkout folder" onclick={configure}>⋯</button>
  {:else}<button title="Set a local checkout folder to open this file in VS Code" aria-label={`Open ${path} in VS Code`} onclick={configure}>VS Code ↗</button>{/if}
 </span>
 <dialog bind:this={dialog} aria-labelledby={titleId} role="dialog" data-prompt-dialog={configOpen ? '' : undefined} onkeydown={dismiss} oncancel={event=>{event.preventDefault();close();}}>

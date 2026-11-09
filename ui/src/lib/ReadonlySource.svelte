@@ -1,7 +1,7 @@
 <script>
   import {tick,untrack} from 'svelte';
   import {theme} from './theme.svelte.js';
-  let {repo,revision,base,headRef,path,content,line=1,onInspect,onDefinition,onReferences,onSemantic,onNavigate,onCommand,onFallback}=$props();
+  let {repo,revision,base,headRef,path,content,line=1,onInspect,onDefinition,onReferences,onSemantic,onNavigate,onCommand,onVscode,onFallback}=$props();
   let container=$state(null),instance=$state.raw(null),error=$state(''),analysis=$state(null),readyMs=$state(null);
   let generation=0;
   $effect(()=>{
@@ -10,7 +10,7 @@
     error='';readyMs=null;analysis=null;
     void import('./monacoReadonly.js').then(async module=>{
       await tick();if(disposed || current!==generation)return;
-      active=untrack(()=>module.createReadonlySource(target,{...source,line,onInspect,onDefinition,onReferences,onSemantic,onNavigate,onCommand,onAnalysis:value=>{if(!disposed)analysis=value;}}));
+      active=untrack(()=>module.createReadonlySource(target,{...source,line,onInspect,onDefinition,onReferences,onSemantic,onNavigate,onCommand,onVscode,onAnalysis:value=>{if(!disposed)analysis=value;}}));
       active.setTheme(theme.name);instance=active;readyMs=performance.now()-started;
     }).catch(failure=>{if(!disposed)error=failure.message ?? 'Editor unavailable.';});
     return()=>{disposed=true;if(instance===active)instance=null;active?.dispose();};

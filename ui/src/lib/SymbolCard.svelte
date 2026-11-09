@@ -1,14 +1,14 @@
 <script>
   import { tick } from 'svelte';
-  import { createActor } from 'xstate';
-  import { reviewLookupMachine } from './reviewLookupMachine.js';
-  import { loadSymbolContext } from './symbolContext.js';
+  import { createSymbolLookup } from './symbolContext.js';
+  import {isPromptDialogOpen} from './dom.js';
+  import OpenInVscode from './OpenInVscode.svelte';
   import { REVIEW_NAVIGATION_EVENT } from './reviewHistory.js';
   let { context = '', onOpen = null, onReferences = null } = $props();
   let card = $state(null);
   let previousFocus;
   let x = $state(8), y = $state(8), expanded = $state(false), chosen = $state(null);
-  const actor = createActor(reviewLookupMachine, {input: {lookup: ({request, signal}) => loadSymbolContext(request, signal)}}).start();
+  const actor = createSymbolLookup({getContext:()=>context,onOpen:(...args)=>onOpen?.(...args)}).start();
   let snapshot = $state(actor.getSnapshot());
   const subscription = actor.subscribe(next => snapshot = next);
   $effect(() => () => { subscription.unsubscribe(); actor.stop(); });
@@ -18,14 +18,15 @@
   let definition = $derived(chosen ?? result?.definition);
   function portal(node) { document.body.append(node); return {destroy() { node.remove(); }}; }
   export function close() { actor.send({type: 'CANCEL'}); }
-  export async function inspect(event, target, keyboard = false) {
+  export async function inspect(event, target, keyboard = false, intent = 'inspect') {
     previousFocus = event.returnFocus ?? document.activeElement;
     x = Math.max(8, Math.min(event.clientX, innerWidth - 408));
     y = Math.max(8, Math.min(event.clientY + 12, innerHeight - 220));
-    expanded = false; chosen = null;
-    actor.send({type: 'LOAD', request: target});
+    expanded = intent==='preview'; chosen = null;
+    const captured={...target,intent,cardContext:context};
+    actor.send({type: 'LOAD', request: captured});
     await tick();
-    if (!card || actor.getSnapshot().context.request !== target) return;
+    if (!card || actor.getSnapshot().context.request !== captured) return;
     if (keyboard) card.querySelector('button')?.focus();
   }
   function dismiss() {
@@ -44,7 +45,7 @@
   $effect(() => {
     if (snapshot.matches('idle')) return;
     const outside = event => { if (!card?.contains(event.target)) close(); };
-    const keys = event => { if (event.key === 'Escape') {event.preventDefault(); event.stopImmediatePropagation(); dismiss();} };
+    const keys = event => { if (isPromptDialogOpen()) return; if (event.key === 'Escape') {event.preventDefault(); event.stopImmediatePropagation(); dismiss();} };
     const selection = () => { const value = window.getSelection(); if (value?.isCollapsed === false && !card?.contains(value.anchorNode)) close(); };
     const navigate = () => close();
     window.addEventListener('pointerdown', outside, true);
@@ -74,9 +75,10 @@
     {:else if result?.candidates?.length}<p>Choose a definition candidate:</p>{/if}
     {#if result?.candidates?.length && !definition}<div class="candidates">{#each result.candidates as candidate}<button onclick={()=>{chosen=candidate; expanded=false;}}>{candidate.path}:{candidate.line}<code>{candidate.text}</code></button>{/each}</div>{/if}
     <footer>
-      {#if definition}<button disabled={!result?.excerpt?.length} aria-expanded={expanded} onclick={()=>expanded=!expanded}>Definition</button>{/if}
+      {#if definition}<button disabled={!result?.excerpt?.length} aria-expanded={expanded} onclick={()=>expanded=!expanded}>Preview definition</button>{/if}
       <button disabled={!onReferences || !/^[A-Za-z_$][\w$]*$/.test(request.symbol)} onclick={references}>Usages</button>
-      {#if definition && onOpen}<button onclick={()=>open(false)}>Open file</button><button onclick={()=>open(true)}>Open beside</button>{/if}
+      {#if definition && onOpen}<button onclick={()=>open(false)}>Open in review</button><button onclick={()=>open(true)}>Open beside</button>{/if}
+      {#if definition && request.repo}<OpenInVscode repo={request.repo} path={definition.path} line={definition.line ?? 1} />{/if}
     </footer>
   </dialog>
 {/if}

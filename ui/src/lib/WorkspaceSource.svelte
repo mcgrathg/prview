@@ -16,6 +16,7 @@
   let root;
   let readonlySource=$state(null),showEditor=$state(true);
   let codeMenu;
+  let vscodeControl,vscodePosition=$state(null);
   let symbolCard;
   const definitionHover = createDefinitionHover(() => onDefinition, () => true);
   $effect(() => () => definitionHover.destroy());
@@ -38,6 +39,7 @@
   $effect(() => () => { subscription.unsubscribe(); actor.stop(); });
   const sourceKey=$derived(JSON.stringify([repo,headRef,pane.file,pane.rev,pane.base,pane.side]));
   $effect(() => {sourceKey;untrack(()=>actor.send({type:'LOAD',request:{repo,headRef,pane:{file:pane.file,rev:pane.rev,base:pane.base,side:pane.side}}}));});
+  $effect(()=>{sourceKey;pane.line;untrack(()=>vscodePosition=null);});
   let tokens = $state(null);
   $effect(() => {
     if(enhancedEditor && showEditor){tokens=null;return;}
@@ -95,10 +97,11 @@
     event.preventDefault();
     const position = {line:Number(row.dataset.line), character, side:pane.side ?? 'right'};
     if (action === 'inspect') inspectSymbol(event, {symbol:token.word,path:pane.file,position});
-    else (action === "references" ? onReferences : onDefinition)?.(token.word, pane.file, position, pane);
+    else if (action==='definition') inspectSymbol(event,{symbol:token.word,path:pane.file,position},false,'open');
+    else onReferences?.(token.word, pane.file, position, pane);
   }
-  function inspectSymbol(event, target, keyboard = false) {
-    symbolCard?.inspect(event, symbolRequest(target.symbol, target.path, {...target.position, side:pane.side ?? 'right'}, {repo, headRef, ...pane, view:'source'}), keyboard);
+  function inspectSymbol(event, target, keyboard = false, intent = 'inspect') {
+    symbolCard?.inspect(event, symbolRequest(target.symbol, target.path, {...target.position, side:pane.side ?? 'right'}, {repo, headRef, ...pane, view:'source'}), keyboard, intent);
   }
   function openSymbol(definition, request, beside) {
     if (onOpenSymbol) onOpenSymbol(definition, request, beside);
@@ -113,17 +116,17 @@
   }
 </script>
 <div tabindex="-1" class="source-file" class:editor-view={enhancedEditor && showEditor} bind:this={root} onclick={lookup} oncontextmenu={contextMenu} onmousemove={event => definitionHover.onMouseMove(event, event.target.closest(".source-code"))} onmouseleave={definitionHover.onMouseLeave} title="Click to inspect; Cmd/Ctrl-click to follow; Alt-click for references; right-click for code actions; drag to select code" role="region" aria-label={`Source ${pane.file}`}>
-  {#if enhancedEditor}<div class="source-tools" role="toolbar" aria-label="Source viewer"><button aria-pressed={showEditor} onclick={()=>showEditor=true}>Editor</button><button aria-pressed={!showEditor} onclick={()=>showEditor=false}>Text</button><button title="File symbols · ⌘⇧O" onclick={()=>onSemantic?.('outline','',pane.file,{line:1,character:0})}>Symbols</button><OpenInVscode {repo} path={pane.file} line={pane.line ?? 1} /><small>{(pane.side==='left' ? pane.base : pane.rev)?.slice(0,7)}</small></div>{/if}
+  {#if enhancedEditor}<div class="source-tools" role="toolbar" aria-label="Source viewer"><button aria-pressed={showEditor} onclick={()=>showEditor=true}>Editor</button><button aria-pressed={!showEditor} onclick={()=>showEditor=false}>Text</button><button title="File symbols · ⌘⇧O" onclick={()=>onSemantic?.('outline','',pane.file,{line:1,character:0})}>Symbols</button><OpenInVscode bind:this={vscodeControl} {repo} path={pane.file} line={vscodePosition?.line ?? pane.line ?? 1} column={(vscodePosition?.character ?? 0)+1} /><small>{(pane.side==='left' ? pane.base : pane.rev)?.slice(0,7)}</small></div>{/if}
   {#if snapshot.matches('loading')}<p role="status">Loading pinned source…</p>
   {:else if snapshot.matches('error')}<p role="alert">{snapshot.context.error} <button onclick={() => actor.send({ type: 'LOAD', request: { repo, headRef, pane } })}>Retry source</button></p>
   {:else if enhancedEditor && showEditor}
-    <ReadonlySource bind:this={readonlySource} {repo} revision={pane.side==='left' ? pane.base : pane.rev} base={pane.base} {headRef} path={pane.file} content={snapshot.context.lines.join('\n')} line={pane.line} {onDefinition} {onReferences} {onSemantic} {onCommand} {onNavigate} onInspect={(event,target,keyboard)=>target ? inspectSymbol(event,target,keyboard) : symbolCard?.close()} onFallback={()=>showEditor=false} />
+    <ReadonlySource bind:this={readonlySource} {repo} revision={pane.side==='left' ? pane.base : pane.rev} base={pane.base} {headRef} path={pane.file} content={snapshot.context.lines.join('\n')} line={pane.line} {onDefinition} {onReferences} {onSemantic} {onCommand} {onNavigate} onInspect={(event,target,keyboard,intent)=>target ? inspectSymbol(event,target,keyboard,intent) : symbolCard?.close()} onVscode={async position=>{const key=sourceKey;vscodePosition=position;await tick();if(key===sourceKey)vscodeControl?.open();}} onFallback={()=>showEditor=false} />
   {:else}
     {#each snapshot.context.lines as line, i}<div class="source-row" class:target={pane.line === i + 1} data-line={i + 1}><button class="line" aria-label={`Select line ${i + 1}`} onclick={() => onNavigate?.({ line: i + 1 })}>{i + 1}</button><span class="source-code">{#if tokens?.[i]}{#each tokens[i] as token}<span style:color={token.color}>{token.content}</span>{/each}{:else}{line}{/if}</span></div>{/each}
   {/if}
 </div>
 <SymbolCard bind:this={symbolCard} context={JSON.stringify([repo,pane.file,pane.rev,pane.base,pane.side,pane.line])} onOpen={openSymbol} {onReferences} />
-<CodeActionsMenu bind:this={codeMenu} onInspect={inspectSymbol} {onDefinition} {onReferences} {onHistory} />
+<CodeActionsMenu {repo} bind:this={codeMenu} onInspect={inspectSymbol} {onDefinition} {onReferences} {onHistory} />
 <style>
   .source-file.editor-view {min-width:0;height:100%;display:flex;flex-direction:column;}
   .source-tools {position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:4px;padding:3px 6px;min-height:22px;background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0;font:10px system-ui;}

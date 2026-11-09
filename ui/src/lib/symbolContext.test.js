@@ -54,3 +54,29 @@ test('closing or superseding a card aborts lookup and cannot navigate on late co
   expect(actor.getSnapshot().context.result).toBeNull();
   actor.stop();
 });
+
+test('explicit symbol open intents resolve once and ignore ambiguity, changed contexts and canceled requests', async () => {
+  const {createSymbolLookup}=await import('./symbolContext.js');
+  const pending=[],opened=[];let context='review-a';
+  const actor=createSymbolLookup({getContext:()=>context,onOpen:(...args)=>opened.push(args),lookup:({request,signal})=>new Promise(resolve=>pending.push({request,signal,resolve}))}).start();
+  const request={symbol:'run',intent:'open',cardContext:context};
+  actor.send({type:'LOAD',request});
+  actor.send({type:'LOAD',request:{...request,intent:'beside'}});
+  expect(pending[0].signal.aborted).toBe(true);
+  pending[0].resolve({status:'ok',definition:{path:'wrong.ts',line:2}});
+  pending[1].resolve({status:'ok',definition:{path:'right.ts',line:7}});
+  await new Promise(resolve=>setTimeout(resolve,0));
+  expect(opened).toHaveLength(1);expect(opened[0][0].path).toBe('right.ts');expect(opened[0][2]).toBe(true);expect(actor.getSnapshot().matches('idle')).toBe(true);
+  actor.send({type:'LOAD',request});pending[2].resolve({status:'ok',candidates:[{path:'one.ts'},{path:'two.ts'}]});await new Promise(resolve=>setTimeout(resolve,0));expect(opened).toHaveLength(1);expect(actor.getSnapshot().matches('ready')).toBe(true);
+  actor.send({type:'LOAD',request});context='review-b';pending[3].resolve({status:'ok',definition:{path:'old-context.ts'}});await new Promise(resolve=>setTimeout(resolve,0));expect(opened).toHaveLength(1);
+  actor.send({type:'LOAD',request:{...request,cardContext:context}});actor.send({type:'CANCEL'});pending[4].resolve({status:'ok',definition:{path:'canceled.ts'}});await new Promise(resolve=>setTimeout(resolve,0));expect(opened).toHaveLength(1);actor.stop();
+});
+
+test('transient source previews cannot rewrite a diff caller at another revision or side',async()=>{
+ const {matchesSymbolCaller}=await import('./symbolContext.js');
+ const comparison={head:'head',base:'base'},current={file:'same.ts',view:'diff',side:'left',rev:'head',base:'base'};
+ expect(matchesSymbolCaller({origin:{file:'same.ts',view:'source',side:'right',rev:'base',base:'base'}},current,comparison)).toBe(false);
+ expect(matchesSymbolCaller({origin:{...current}},current,comparison)).toBe(true);
+ expect(matchesSymbolCaller({origin:{...current,side:'right'}},current,comparison)).toBe(false);
+ expect(matchesSymbolCaller({origin:{...current,file:'other.ts'}},current,comparison)).toBe(false);
+});

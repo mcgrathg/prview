@@ -36,7 +36,8 @@ function position(value = {}) {
 export function normalizeReferenceOrigin(value) {
   if (!record(value)) return undefined;
   const path = relativePath(value.path);
-  const symbol = typeof value.symbol === 'string' && /^[A-Za-z_$][A-Za-z0-9_$]{0,199}$/.test(value.symbol) ? value.symbol : null;
+  const contextOnly = value.kind === 'context';
+  const symbol = contextOnly ? text(value.symbol, 200) : typeof value.symbol === 'string' && /^[A-Za-z_$][A-Za-z0-9_$]{0,199}$/.test(value.symbol) ? value.symbol : null;
   const line = positiveInteger(value.line);
   const character = Number.isSafeInteger(value.character) && value.character >= 0 ? value.character : null;
   const rev = revision(value.rev);
@@ -46,7 +47,8 @@ export function normalizeReferenceOrigin(value) {
   const previewLine = positiveInteger(candidate.line);
   const previewCharacter = Number.isSafeInteger(candidate.character) && candidate.character >= 0 ? candidate.character : null;
   const preview = previewPath && previewLine && previewCharacter !== null ? { path: previewPath, line: previewLine, character: previewCharacter } : null;
-  return { path, symbol, line, character, rev, base: revision(value.base), ...(preview ? { preview } : {}) };
+  if (contextOnly && !preview) return undefined;
+  return { path, symbol, line, character, rev, base: revision(value.base), ...(contextOnly ? {kind:'context'} : {}), ...(preview ? { preview } : {}) };
 }
 
 /** Full organization controls; explicit rules:{} preserves Show all across reloads. */
@@ -110,13 +112,40 @@ export function reviewReferenceDestination(review, entry, comparison = {}) {
     const anchor = state.view === 'source' ? referenceDiffLocation({ rev: state.rev }, state.file, comparison) : null;
     return normalizeReviewState({ ...state, ...(anchor ?? {}), search: undefined, references: { ...state.references, preview: { path, line, character } } });
   }
-  const location = { ...change, line };
+  return reviewFileDestination({...state,references:state.references.kind === 'context' ? undefined : {...state.references,preview:undefined}}, {...change,line});
+}
+
+export function reviewFileDestination(review, location) {
+  const state=normalizeReviewState(review);
+  const target=position({...state,...location});
+  delete target.layout;
+  if (!target.file) return state;
   const codePanes = state.panes?.filter(pane => !['files', 'related'].includes(pane.view));
   const pane = codePanes?.find(pane => pane.id === state.active) ?? codePanes?.[0];
   return normalizeReviewState({
-    ...state, ...location, search: undefined, references: { ...state.references, preview: undefined },
-    ...(pane ? { panes: state.panes.map(candidate => candidate.id === pane.id ? { ...candidate, ...location } : candidate), active: pane.id } : {}),
+    ...state, ...target, search:undefined,
+    ...(pane ? {panes:state.panes.map(candidate=>candidate.id===pane.id ? {...candidate,...target} : candidate),active:pane.id} : {}),
   });
+}
+
+export function reviewDefinitionDestination(review, definition, request, comparison = {}) {
+  const state = normalizeReviewState(review);
+  const references = normalizeReferenceOrigin({kind:'context',path:request.path,symbol:request.symbol,line:request.position?.line ?? 1,character:request.position?.character ?? 0,rev:request.sha,base:state.base,preview:{path:definition.path,line:definition.line ?? 1,character:0}});
+  if (!references) return state;
+  const destination = reviewReferenceDestination({...state,references},{...definition,line:definition.line ?? 1},comparison);
+  if (!destination.references && state.references?.kind !== 'context') return normalizeReviewState({...destination,references:state.references ? {...state.references,preview:undefined} : undefined});
+  return destination;
+}
+
+export function reviewBesideDestination(review, location) {
+  const state = normalizeReviewState(review);
+  const target = position(location);
+  if (!target.file || !target.rev) return state;
+  const panes = state.panes ? [...state.panes] : state.file ? [{id:'p1',...position(state)}] : [];
+  if (panes.length >= MAX_PANES) return state;
+  const id = Array.from({length:MAX_PANES},(_,i)=>`p${i+1}`).find(id=>!panes.some(pane=>pane.id===id));
+  panes.push({id,...target,layout:location.layout ?? state.layout});
+  return normalizeReviewState({...state,...target,rev:state.rev,base:state.base,search:undefined,panes,active:id});
 }
 
 function jsonParam(params, key) {

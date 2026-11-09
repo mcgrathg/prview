@@ -1,3 +1,5 @@
+import {createActor} from 'xstate';
+import {reviewLookupMachine} from './reviewLookupMachine.js';
 import { repoDefinition, repoFile } from './api.js';
 
 export function symbolRequest(symbol, path, position, source) {
@@ -28,4 +30,19 @@ export async function loadSymbolContext(request, signal, api = { repoDefinition,
 
 export function symbolDestination(definition, request) {
   return { file: definition.path, line: definition.line ?? 1, view: 'source', side: 'right', rev: request.sha, base: request.origin.base };
+}
+
+export function createSymbolLookup({getContext,onOpen,lookup=({request,signal})=>loadSymbolContext(request,signal)}) {
+  const actor=createActor(reviewLookupMachine,{input:{lookup,onResult:({result,request})=>{
+    if (request.cardContext!==getContext() || result?.status!=='ok' || !result.definition || !['open','beside'].includes(request.intent)) return;
+    actor.send({type:'CANCEL'});
+    onOpen?.(result.definition,request,request.intent==='beside');
+  }}});
+  return actor;
+}
+
+export function matchesSymbolCaller(request, location, comparison) {
+  const origin=request.origin;
+  const revision=value=>value.side==='left' ? value.base ?? comparison.base : value.rev ?? comparison.head;
+  return origin.file===location.file && origin.view===location.view && revision(origin)===revision(location);
 }
