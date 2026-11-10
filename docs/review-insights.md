@@ -71,3 +71,19 @@ bun test server/reviewInsights.test.ts server/reviewOrganization.test.ts \
 ```
 
 Visual evidence retained with the user-facing sketch: `prview-all-sorts-attention.png` captures the preceding compact UI, `prview-insights-quiet-live.png` the quiet new entry points, and `prview-insights-live.png` the real complexity rail beside its highlighted PR line. The sketch remains a throwaway artifact; runtime proof uses the live app and real Git objects.
+
+## Follow the active file
+
+The review selection remains authoritative. The Insights actor receives file changes from the same selected path that drives the file tree: viewport/keyboard selection in a single diff, or the active docked pane. It reuses the comparison facts without another analysis request and keeps the selected Change/History/Dependencies tab.
+
+| State / event | Result |
+| --- | --- |
+| Rail closed / active file changes | Stay closed |
+| Rail open / active file changes in the loaded comparison | Display that file; retain the selected tab and loaded evidence |
+| Rail open / no active file or incompatible pane comparison | Close rather than display unrelated evidence |
+| Loading or failed / active file changes | Track the latest file while open; completion or retry uses that file |
+| Comparison replaced or review left | Existing cancellation clears the rail and obsolete facts |
+
+The synchronization regression was reproduced on the live 103-file review: the URL and tree selected `server/tsWorker.ts` while Insights retained `server/tsService.ts`. Two actor regressions failed before the change and passed afterward, covering retained tabs/evidence, no closed-rail reopening, and changes during load/failure/retry. Live verification covered file clicks, browser Back, Shift+J, ordinary viewport scrolling, both docked pane tabs, return to single view and Import flow sorting. The organization callback now preserves the viewport-selected file when receiving the same file order, preventing the older URL location from overriding it. Before/after captures are `prview-insights-follow-before.png` and `prview-insights-follow-after.png`. Fixed feature version: `1794284561874`.
+
+The synchronization delivery passed the same focused 12-file suite with 72 tests / 512 assertions, plus the production build from the staged-source snapshot. The two new actor regressions were observed failing against the previous machine before implementation.

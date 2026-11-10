@@ -25,3 +25,24 @@ test('an endpoint result cannot authorize facts for another captured comparison'
   const actor=createActor(reviewInsightsMachine,{input:{load:async()=>({status:'ok',...request,base:'f'.repeat(40)})}}).start();actor.send({type:'LOAD',request});await flush();
   expect(actor.getSnapshot().matches('error')).toBe(true);expect(actor.getSnapshot().context.error).toContain('another comparison');actor.stop();
 });
+test('an open rail follows the selected file without resetting its tab or reloading facts; closed rails stay closed',async()=>{
+  let loads=0;const actor=createActor(reviewInsightsMachine,{input:{load:async()=>{loads++;return {status:'ok',...request,files:{'a.ts':{},'b.ts':{}}};}}}).start();
+  actor.send({type:'LOAD',request});await flush();
+  actor.send({type:'FILE.CHANGED',path:'b.ts'});expect(actor.getSnapshot().context.file).toBeNull();
+  actor.send({type:'OPEN',path:'a.ts'});actor.send({type:'TAB',tab:'history'});
+  const result=actor.getSnapshot().context.result;
+  actor.send({type:'FILE.CHANGED',path:'b.ts'});
+  expect(actor.getSnapshot().context.file).toBe('b.ts');expect(actor.getSnapshot().context.tab).toBe('history');
+  expect(actor.getSnapshot().context.result).toBe(result);expect(loads).toBe(1);
+  actor.send({type:'FILE.CHANGED',path:null});expect(actor.getSnapshot().context.file).toBeNull();
+  actor.send({type:'FILE.CHANGED',path:'a.ts'});expect(actor.getSnapshot().context.file).toBeNull();actor.stop();
+});
+test('file changes during loading and failure retain the latest open location through retry',async()=>{
+  let resolve;let attempts=0;
+  const actor=createActor(reviewInsightsMachine,{input:{load:()=>{if(!attempts++)return Promise.reject(Error('Missing mirror'));return new Promise(done=>resolve=done);}}}).start();
+  actor.send({type:'LOAD',request});actor.send({type:'OPEN',path:'a.ts'});await flush();
+  actor.send({type:'FILE.CHANGED',path:'b.ts'});expect(actor.getSnapshot().context.file).toBe('b.ts');
+  actor.send({type:'TAB',tab:'dependencies'});actor.send({type:'RETRY'});
+  actor.send({type:'FILE.CHANGED',path:'c.ts'});resolve({status:'ok',...request,files:{'c.ts':{}}});await flush();
+  expect(actor.getSnapshot().matches('ready')).toBe(true);expect(actor.getSnapshot().context.file).toBe('c.ts');expect(actor.getSnapshot().context.tab).toBe('dependencies');actor.stop();
+});

@@ -194,6 +194,15 @@ export const FEATURE_UPDATES = [
       { title: 'Facts with their limits', body: 'The rail identifies the analyzer, revisions and bounded coverage. Dependency evidence covers supported changed JS/TS files. Optional Lizard setup enables function metrics; missing or incomplete measurements remain explicitly unavailable. No AI judgment or repository scripts are involved.' },
     ],
   },
+  {
+    version: 1794284561874,
+    title: 'Insights follows the file you are reviewing',
+    summary: 'An open Insights rail stays synchronized with the selected file and active code pane.',
+    howToTry: 'Open Insights, choose History or Dependencies, then click another file, scroll between files, use J/K, or focus another docked code pane. The rail follows while keeping its selected tab. Closing it keeps it closed.',
+    changes: [
+      { title: 'One active review file', body: 'File-selection events update the existing Insights state machine without reloading analysis. Organization refreshes preserve viewport selection instead of restoring an older URL file. Back follows the restored location; incompatible pane comparisons close the rail rather than show unrelated evidence.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';

@@ -319,6 +319,12 @@
     const request={...organizationComparison};
     untrack(()=>{const before=insightsActor.getSnapshot().context.request;if(!active){if(before)insightsActor.send({type:'CANCEL'});return;}if(JSON.stringify(before)!==JSON.stringify(request))insightsActor.send({type:'LOAD',request});});
   });
+  $effect(()=>{
+    const origin=workspaceEnabled ? activeReviewPane : reviewState.view==='source' ? reviewState : null;
+    const aligned=(!origin?.rev || origin.rev===organizationComparison.head) && (!origin?.base || origin.base===organizationComparison.base);
+    const path=organizationEnabled && tab==='files' && aligned ? (origin?.view==='source' ? origin.file : selectedPath) : null;
+    untrack(()=>insightsActor.send({type:'FILE.CHANGED',path}));
+  });
   function inspectInsights(event,path){
     if(!path)return;
     insightsReturnFocus=popoverReturnTarget(event?.currentTarget ?? document.activeElement);
@@ -353,10 +359,10 @@
   let organizationCollapsed = $derived(organizationActive ? new Set([...collapsedFiles, ...organization.folded]) : collapsedFiles);
   function receiveOrganization(next) {
     const hadModel = organization?.key === next.key;
-    const selected = reviewState.file ?? (hadModel ? files[fileIndex]?.path : null);
+    const selected = (hadModel ? files[fileIndex]?.path : null) ?? reviewState.file;
     const previousPaths = hadModel ? files.map(file => file.path).join("\n") : "";
     organization = next;
-    fileIndex = Math.max(0, files.findIndex(file => file.path === selected));
+    if (!hadModel || previousPaths !== files.map(file => file.path).join("\n")) fileIndex = Math.max(0, files.findIndex(file => file.path === selected));
     if (selected && !workspaceEnabled && previousPaths !== files.map(file => file.path).join("\n")) {
       requestAnimationFrame(() => scrollToFile(fileIndex));
     }

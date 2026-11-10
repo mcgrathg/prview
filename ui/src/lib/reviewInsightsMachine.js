@@ -9,6 +9,7 @@ export const reviewInsightsMachine=setup({
     CANCEL:{target:'.idle',actions:assign({request:null,result:null,error:'',file:null,tab:'change'})},
     OPEN:{actions:assign(({event})=>({file:event.path,tab:'change'}))},
     CLOSE:{actions:assign({file:null})},
+    'FILE.CHANGED':{guard:({context,event})=>Boolean(context.file)&&context.file!==event.path,actions:assign(({event})=>({file:event.path ?? null}))},
     TAB:{guard:({context,event})=>Boolean(context.file)&&['change','history','dependencies'].includes(event.tab),actions:assign(({event})=>({tab:event.tab}))},
     RETRY:{guard:'hasRequest',target:'.loading',reenter:true,actions:assign({result:null,error:''})},
   },
