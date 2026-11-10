@@ -3,7 +3,11 @@
   import Popover from "./Popover.svelte";
   import Chevron from "./Chevron.svelte";
 
-  let { files, selectedPath, hoveredPath = null, onSelect, onContextMenu = null, collapsedPaths = null, onToggleDirectory = null, onOpenBeside = null, onDragFile = null } = $props();
+  let {
+    files, selectedPath, hoveredPath = null, onSelect, onContextMenu = null,
+    collapsedPaths = null, onToggleDirectory = null, onOpenBeside = null, onDragFile = null,
+    groupByFolder = true, fileDetails = new Map(), fileHref = null,
+  } = $props();
 
   let lastSelectionKey = null;
   let rowHeight = $state(32);
@@ -15,11 +19,21 @@
   let windowStart = $state(0);
   let windowEnd = $state(40);
 
+  let fileNodes = $derived(files.map(file => ({
+    name: file.path.split('/').pop(),
+    path: file.path,
+    additions: file.additions,
+    deletions: file.deletions,
+    tone: fileTone(file),
+    icon: fileIcon(file.path.split('/').pop()),
+    isRenamed: Boolean(file.previousPath),
+    isUnchangedRename: file.isUnchangedRename,
+  })));
+
   let tree = $derived.by(() => {
     const root = { name: "", path: "", dirs: new Map(), files: [] };
-    files.forEach((file) => {
-      const parts = file.path.split("/");
-      const name = parts.pop();
+    for (const file of fileNodes) {
+      const parts = file.path.split("/").slice(0, -1);
       let node = root;
       let acc = "";
       for (const part of parts) {
@@ -27,23 +41,15 @@
         if (!node.dirs.has(part)) node.dirs.set(part, { name: part, path: acc, dirs: new Map(), files: [] });
         node = node.dirs.get(part);
       }
-      node.files.push({
-        name,
-        path: file.path,
-        additions: file.additions,
-        deletions: file.deletions,
-        tone: fileTone(file),
-        icon: fileIcon(name),
-        isRenamed: Boolean(file.previousPath),
-        isUnchangedRename: file.isUnchangedRename,
-      });
-    });
+      node.files.push(file);
+    }
     compress(root);
     sumLines(root);
     return root;
   });
 
   let rows = $derived.by(() => {
+    if (!groupByFolder) return fileNodes.map(file => ({key: `file:${file.path}`, kind: "file", depth: 0, value: file}));
     const flattened = [];
     function append(node, depth) {
       for (const dir of node.dirs.values()) {
@@ -112,7 +118,7 @@
     rowHeight = parseFloat(getComputedStyle(treeEl).getPropertyValue('--tree-row-height')) || 32;
     const root = treeEl.parentElement;
     const top = Math.max(0, root.scrollTop - scrollGeometry(root).treeTop);
-    const start = Math.max(0, Math.floor(top / rowHeight) - OVERSCAN);
+    const start = Math.min(rows.length, Math.max(0, Math.floor(top / rowHeight) - OVERSCAN));
     const end = Math.min(rows.length, Math.ceil((top + root.clientHeight) / rowHeight) + OVERSCAN);
     if (start !== windowStart) windowStart = start;
     if (end !== windowEnd) windowEnd = end;
@@ -208,20 +214,26 @@
         <span class="counts mono"><span class="add">+{value.additions}</span><span class="del">−{value.deletions}</span></span>
       </button>
     {:else}
+      {@const details = fileDetails.get(value.path)}
       <div class="file-row">
-      <button
+      <svelte:element this={fileHref ? 'a' : 'button'} href={fileHref?.(value.path)} role={fileHref ? 'link' : 'button'} tabindex="0"
         class="row file"
         data-event="tree-file"
-        title={`${value.path} · +${value.additions} −${value.deletions}`}
+        title={details?.title ?? `${value.path} · +${value.additions} −${value.deletions}`}
+        aria-label={details?.label}
         aria-current={value.path === selectedPath ? "location" : undefined}
         onpointerdown={event => onDragFile?.(event, value.path)}
         class:selected={value.path === selectedPath}
         class:hovered={value.path === hoveredPath}
         style="padding-left:calc({row.depth} * var(--tree-indent,16px) + 8px)"
-        onclick={() => onSelect(value.path)}
+        onclick={event => {
+          if (fileHref && (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0)) return;
+          event.preventDefault(); onSelect(value.path);
+        }}
         oncontextmenu={onContextMenu && ((event) => onContextMenu(event, value.path))}
       >
         {@render rails(row.depth)}
+        {#if details?.rank}<span class="rank" title={details.title}>#{details.rank}</span>{/if}
         {#if value.isRenamed}
           <svg class="moved-icon" viewBox="0 0 12 12" aria-label="Moved file">
             <path d="M1 3h7V1l3 3-3 3V5H1zm10 6H4v2L1 8l3-3v2h7z"></path>
@@ -252,7 +264,7 @@
         {#if !value.isUnchangedRename}
           <span class="counts mono"><span class="add">+{value.additions}</span><span class="del">−{value.deletions}</span></span>
         {/if}
-      </button>
+      </svelte:element>
       {#if onOpenBeside}<div class="row-actions"><Popover label={`Actions for ${value.path}`} closeOnAction><button class="menu-action" onclick={() => onOpenBeside(value.path)}>Open beside</button></Popover></div>{/if}
       </div>
     {/if}
@@ -267,6 +279,7 @@
     display: flex;
     flex-direction: column;
   }
+  .rank { flex:none;min-width:22px;font-size:10px;color:var(--text-faint);cursor:help;text-decoration:underline dotted;text-underline-offset:3px; }
   .spacer {
     flex: none;
   }
@@ -288,6 +301,8 @@
     cursor: pointer;
     border-radius: 8px;
     white-space: nowrap;
+    text-decoration: none;
+    box-sizing: border-box;
   }
   .row:hover,
   .row.hovered {

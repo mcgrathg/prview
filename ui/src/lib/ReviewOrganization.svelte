@@ -11,7 +11,7 @@
   import { beginReviewFileDrag } from './reviewFileDrag.js';
   import { relatedCandidates } from '../../../shared/review-organization/relationships.ts';
 
-  let { comparison, nativeFiles, selectedPath, onChange, onSelect, onOpenBeside = null, docking = false, fileHref = null, onControlsChange = null, restoredControls = null } = $props();
+  let { comparison, nativeFiles, selectedPath, onChange, onSelect, onOpenBeside = null, fileHref = null, onControlsChange = null, restoredControls = null } = $props();
   let optionsPanel;
   export function showOptions() { optionsPanel?.show(); }
   export function setOrder(order) { send({type:'ORDER.SET', order}); }
@@ -39,11 +39,18 @@
   })).filter(role => role.count));
   let shownEntries = $derived(model.visible.filter(entry => entry.state !== 'fold'));
   let foldedEntries = $derived(model.visible.filter(entry => entry.state === 'fold'));
-  let treeFiles = $derived(shownEntries.map(entry => nativeFiles.find(file => file.path === entry.file.filename)).filter(Boolean));
+  let nativeByPath = $derived(new Map(nativeFiles.map(file => [file.path, file])));
+  function nativeEntries(entries) { return entries.map(entry => nativeByPath.get(entry.file.filename)).filter(Boolean); }
+  let treeFiles = $derived(nativeEntries(shownEntries));
+  let foldedFiles = $derived(nativeEntries(foldedEntries));
+  let hiddenFiles = $derived(nativeEntries(model.hidden));
+  let fileDetails = $derived(new Map(model.entries.map(entry => [entry.file.filename, {
+    rank: controls.order === 'path' ? null : entry.rank,
+    title: `${entry.file.filename}\n${explainReviewOrder(entry,model.entries,controls.order).join('\n')}\n${entry.reason}`,
+    label: `${entry.file.filename}, reading position ${entry.rank} of ${model.entries.length}, ${entry.file.additions} lines added, ${entry.file.deletions} lines removed${entry.state === 'show' ? '' : `, ${entry.state}`}`,
+  }])));
   let customVisibility = $derived(Object.keys(controls.rules).length + Object.keys(controls.overrides).length);
-  let groups = $derived(controls.folders
-    ? [...new Set(shownEntries.map(entry => entry.file.directory))].map(name => ({ name, entries: shownEntries.filter(entry => entry.file.directory === name) }))
-    : [{ name: '', entries: shownEntries }]);
+  function dragFile(event, path) { beginReviewFileDrag(event,{file:path,rev:comparison.head,base:comparison.base,view:'diff'}); }
   export function restoreControls(controls) { actor.send({ type: 'CONTROLS.RESTORE', controls }); }
   let restoredKey = '';
   $effect(() => {
@@ -72,17 +79,6 @@
   export function toggleTests() { send({ type: 'ROLE.SET', role: 'test', visibility: controls.rules.test === 'hide' ? 'show' : 'hide' }); }
   export function toggleFold(path) { send({ type: 'FILE.TOGGLE', path }); }
 </script>
-
-{#snippet queueEntry(entry)}
-  {@const orderExplanation=explainReviewOrder(entry,model.entries,controls.order).join('\n')}
-  <div class="queue-entry">
-    <a href={fileHref?.(entry.file.filename) ?? "#"} class="queue-file" class:active={entry.file.filename === selectedPath} class:folded={entry.state === 'fold'} title={`${entry.file.filename}\n${orderExplanation}\n${entry.reason}`} aria-label={`${entry.file.filename}, reading position ${entry.rank} of ${model.entries.length}, ${entry.file.additions} lines added, ${entry.file.deletions} lines removed${entry.state === 'fold' ? ', folded' : ''}`} aria-current={entry.file.filename === selectedPath ? 'true' : undefined} data-event="organization-select-file" draggable={!docking && Boolean(onOpenBeside)} onpointerdown={event => { if (docking) beginReviewFileDrag(event, { file: entry.file.filename, rev: comparison.head, base: comparison.base, view: 'diff' }); }} ondragstart={event => { event.dataTransfer.setData('application/x-prview-file', JSON.stringify({ file: entry.file.filename, rev: comparison.head, base: comparison.base, view: 'diff' })); event.dataTransfer.effectAllowed = 'copy'; }} onclick={event => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return; event.preventDefault(); select(entry.file.filename); }}>
-      {#if controls.order !== 'path'}<span class="rank" title={orderExplanation}>#{entry.rank}</span>{/if}<span class="path"><strong>{entry.file.name}</strong>{#if !controls.folders}<small>{entry.file.directory}</small>{/if}</span>
-      <span class="file-stats" title={`${entry.file.additions} lines added, ${entry.file.deletions} lines removed`}><span class="added">+{entry.file.additions}</span> <span class="removed">−{entry.file.deletions}</span>{#if entry.state === 'fold'}<span class="fold-label">folded</span>{/if}</span>
-    </a>
-    {#if onOpenBeside}<div class="entry-actions"><Popover label={`Actions for ${entry.file.filename}`} closeOnAction><button class="menu-action" onclick={() => onOpenBeside(entry.file.filename)}>Open beside</button></Popover></div>{/if}
-  </div>
-{/snippet}
 
 <div class="organization" aria-label="Review organization">
   <div class="organization-controls">
@@ -144,47 +140,27 @@
     {#if snapshot.matches('error')}<div class="note error" role="alert">Analysis unavailable. <button onclick={showOptions}>Details / retry</button></div>{/if}
   </div>
   <div class="queue" aria-label="Ordered changed files">
-    {#if controls.order === 'path' && controls.folders}
-      <FileTree files={treeFiles} {selectedPath} onSelect={select} collapsedPaths={controls.collapsedFolders} onToggleDirectory={directory => send({type:'FOLDER.TOGGLE',directory})} {onOpenBeside} onDragFile={(event,path) => beginReviewFileDrag(event,{file:path,rev:comparison.head,base:comparison.base,view:'diff'})} />
-    {:else}
-    {#each groups as group}
-      <div class="folder-group">
-        {#if group.name}
-          <button class="folder" aria-expanded={!controls.collapsedFolders.includes(group.name)} aria-label={`${controls.collapsedFolders.includes(group.name) ? 'Expand' : 'Collapse'} folder ${group.name}`} data-event="organization-toggle-folder" onclick={() => send({ type: 'FOLDER.TOGGLE', directory: group.name })}>
-            <span class="folder-chevron" aria-hidden="true">{controls.collapsedFolders.includes(group.name) ? '▸' : '▾'}</span><span class="folder-name">{group.name}</span><span class="count">{group.entries.length}</span>
-          </button>
-        {/if}
-        {#if !group.name || !controls.collapsedFolders.includes(group.name)}
-          {#each group.entries as entry (entry.file.filename)}
-            {@render queueEntry(entry)}
-          {/each}
-        {/if}
-      </div>
-    {/each}
-    {/if}
+    <FileTree files={treeFiles} {selectedPath} {fileDetails} {fileHref} groupByFolder={controls.folders} onSelect={select} collapsedPaths={controls.collapsedFolders} onToggleDirectory={directory => send({type:'FOLDER.TOGGLE',directory})} {onOpenBeside} onDragFile={dragFile} />
     {#if !model.visible.length}<p class="note">No visible files match. <button onclick={() => { send({ type: 'QUERY.SET', query: '' }); send({ type: 'SHOW_ALL' }); }}>Show all files</button></p>{/if}
   {#if foldedEntries.length}
     <details open={Boolean(controls.query)}><summary>Folded files ({foldedEntries.length})</summary>
-      {#each foldedEntries as entry (entry.file.filename)}{@render queueEntry(entry)}{/each}
+      <FileTree files={foldedFiles} {selectedPath} {fileDetails} {fileHref} groupByFolder={false} onSelect={select} {onOpenBeside} onDragFile={dragFile} />
     </details>
   {/if}
   {#if model.hidden.length}
     <details><summary>Hidden files ({model.hidden.length})</summary>
-      {#each model.hidden as entry (entry.file.filename)}
-        <button class="restore-file" data-event="organization-restore-file" title={entry.file.filename} onclick={() => reveal(entry.file.filename)}>{entry.file.name} · Show</button>
-      {/each}
+      <FileTree files={hiddenFiles} {selectedPath} {fileDetails} {fileHref} groupByFolder={false} onSelect={reveal} />
     </details>
   {/if}
   </div>
 </div>
 
 <style>
-  a.queue-file, a.related { text-decoration: none; color: inherit; }
+  a.related { text-decoration:none;color:inherit; }
   .organization { display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;width:100%;height:100%;font-size:12px;color:var(--text); }
   .organization-controls{flex:none;padding:0 7px 8px;background:var(--bg);}
   .filter-row{display:flex;align-items:center;gap:5px;} .filter-row input{width:0;flex:1 1 0;min-width:0;margin:0;} .queue{flex:1;min-height:0;overflow:auto;padding:0 4px 12px;}
   .active-options{display:block;margin-top:5px;font-size:11px;text-align:left;}
-  .queue-entry{position:relative;} .entry-actions{position:absolute;right:0;top:7px;opacity:0;} .queue-entry:hover .entry-actions,.queue-entry:focus-within .entry-actions{opacity:1;} @media(pointer:coarse){.entry-actions{opacity:1;}}
   .organization-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
   label { display:flex; gap:6px; align-items:center; justify-content:space-between; margin:8px 0; }
   input[type='search'], select { color:var(--text); background:var(--bg); border:1px solid var(--border-soft); border-radius:5px; padding:6px; min-width:0; }
@@ -202,24 +178,9 @@
   .error { color:var(--red); }
   .role-rule span { color:var(--text-dim); margin-left:auto; }
   .role-rule select { width:80px; }
-  .queue-file { box-sizing:border-box;width:100%; display:flex; align-items:center; gap:7px; text-align:left; color:var(--text); padding:6px 32px 6px 4px; border-bottom:1px solid var(--border-soft); }
-  .queue-file.active { background:var(--bg-hover); border-left:2px solid var(--link); }
-  .queue-file.folded { color:var(--text-dim); }
-  .path { flex:1; min-width:0; }
   strong, small { display:block; overflow:hidden; text-overflow:ellipsis; }
-  .path strong { font-weight:400; font-family:var(--sans); }
   small { color:var(--text-dim); margin-top:4px; font-size:10px; }
-  .rank { cursor:help; text-decoration:underline dotted; text-underline-offset:3px; }
-  .rank, .count { color:var(--text-faint); font-size:10px; }
-  .file-stats { flex:none; text-align:right; font-size:10px; white-space:nowrap; }
-  .added { color:var(--add-text, #73c991); }
-  .removed { color:var(--del-text, #e99299); }
-  .fold-label { display:block; color:var(--text-dim); margin-top:3px; }
-  .folder { display:flex; align-items:baseline; gap:6px; width:100%; padding:12px 4px 7px; color:var(--text-dim); text-align:left; }
-  .folder:hover { color:var(--text); background:var(--bg-hover); }
-  .folder-chevron { flex:none; }
-  .folder-name { flex:1; min-width:0; overflow-wrap:anywhere; }
-  .restore-file, .related { display:block; width:100%; padding:8px 2px; text-align:left; }
+  .related { display:block; width:100%; padding:8px 2px; text-align:left; }
   .related small { white-space:normal; }
   .related-label { margin-top:14px; }
   .follow { margin:10px 0; text-align:left; }

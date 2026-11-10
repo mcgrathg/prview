@@ -173,6 +173,16 @@ export const FEATURE_UPDATES = [
       { title: 'Quick switching', body: 'The compact file picker opens files or adds them beside the review. Commands change layout, reading order and panels through the existing state machines. Cmd/Ctrl+K still finds pull requests.' },
     ],
   },
+  {
+    version: 1794271339874,
+    title: 'Compact files in every reading order',
+    summary: 'Attention, Original, Changed lines and Import flow now use the same compact file rows as the default view.',
+    howToTry: 'Open File and review options beside Filter files and choose any reading order. Hover a rank number for its reasoning. Group by folder, fold or hide categories, and use the row’s ⋯ menu to open beside.',
+    changes: [
+      { title: 'One familiar list', body: 'All five orders share file icons, single-line rows, selection and contextual actions. Folded and hidden files use the same compact layout, with full paths available on hover.' },
+      { title: 'Keep the sorting you chose', body: 'Flat lists retain the engine’s exact order and global ranks through filtering. Folder grouping and collapse remain optional; existing review URLs still restore your choices.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';
