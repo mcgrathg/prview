@@ -2,6 +2,7 @@ import {repositoryInsight,validInsightRequest} from './repoInsight.ts';
 import { fileCommitContext, validCommitContextRequest } from './reviewCommitContext.ts';
 import { fetchReviewViewed, writeReviewViewed, ReviewViewedError } from "./reviewViewed.ts";
 import { fetchReviewAttachmentCapability, uploadReviewAttachment, readReviewAttachmentForm, ReviewAttachmentError } from "./reviewAttachments.ts";
+import { reviewInsights } from "./reviewInsights.ts";
 import { reviewOrganization } from "./reviewOrganization.ts";
 import { handleWhiteboard } from "./whiteboard.ts";
 import { codeScanningAlertNumber, isCodeScanningThread, validateCodeScanningDismissal } from "../shared/codeScanning.js";
@@ -3235,7 +3236,7 @@ const REF_RE = /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/;
 
 const MIN_SEARCH_QUERY = 2;
 
-async function handleReviewOrganization(url: URL): Promise<Response> {
+async function handleReviewOrganization(url: URL, insights = false): Promise<Response> {
   const repo = url.searchParams.get("repo") ?? "";
   const numberText = url.searchParams.get("number") ?? "";
   const head = url.searchParams.get("head") ?? "";
@@ -3251,7 +3252,9 @@ async function handleReviewOrganization(url: URL): Promise<Response> {
   return withSearchCtx(repo, head, head, async (source) => {
     if (source.status !== "ok") return json({ error: `Source mirror ${source.status}; retry after it finishes.` }, 503);
     try {
-      const result = await reviewOrganization(repo, Number(numberText), base, head, new TextDecoder().decode(patch), source.checkout);
+      const result = insights
+        ? await reviewInsights(source.checkout,{repo,number:Number(numberText),base,head},new TextDecoder().decode(patch))
+        : await reviewOrganization(repo, Number(numberText), base, head, new TextDecoder().decode(patch), source.checkout);
       return json(result);
     } catch (error) {
       return json({ error: String(error) }, 503);
@@ -4343,6 +4346,7 @@ export function buildFetchHandler(port: number, dependencyOverrides: Partial<Htt
     if (req.method === "GET" && url.pathname === "/api/file-history/diff") {
       return handleFileHistoryDiff(req, url);
     }
+    if (req.method === "GET" && url.pathname === "/api/review-insights") return handleReviewOrganization(url,true);
     if (req.method === "GET" && url.pathname === "/api/review-organization") {
       return handleReviewOrganization(url);
     }

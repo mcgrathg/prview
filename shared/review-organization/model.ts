@@ -1,3 +1,4 @@
+import { insightMatches, type FileInsight } from '../review-insights.ts';
 import { analyze, orderFiles, visibilityFor, type Capture, type Visibility } from './analysis.ts';
 import { orderByImports } from './flow.ts';
 import type { ReferenceGraph } from './relationships.ts';
@@ -18,14 +19,15 @@ function compareReviewPaths(a: string, b: string) {
   return left.length-right.length;
 }
 
-export function organizationModel(capture: Capture, graph: ReferenceGraph, controls: Controls) {
+export function organizationModel(capture: Capture, graph: ReferenceGraph, controls: Controls, insights: Record<string, FileInsight> | null = null) {
   const analyzed = analyze(capture);
   const flow = orderByImports(analyzed, graph, controls.root);
-  const ordered = controls.order === 'path' ? [...analyzed].sort((a,b)=>compareReviewPaths(a.filename,b.filename)) : controls.order === 'flow' ? flow.ordered : orderFiles(analyzed, controls.order);
+  const hotspotOrder = () => [...analyzed].sort((a,b)=>{const left=insights?.[a.filename]?.score,right=insights?.[b.filename]?.score;return (left==null?1:0)-(right==null?1:0) || (right ?? 0)-(left ?? 0) || a.filename.localeCompare(b.filename);});
+  const ordered = controls.order === 'hotspots' ? hotspotOrder() : controls.order === 'path' ? [...analyzed].sort((a,b)=>compareReviewPaths(a.filename,b.filename)) : controls.order === 'flow' ? flow.ordered : orderFiles(analyzed, controls.order);
   const ranks = new Map(ordered.map((file, index) => [file.filename, index + 1]));
   const entries = ordered.map(file => ({ file, rank: ranks.get(file.filename)!, ...visibilityFor(file, controls.rules, controls.overrides[file.filename]) }));
   const query = controls.query.trim().toLowerCase();
-  const matched = entries.filter(entry => !query || entry.file.filename.toLowerCase().includes(query));
+  const matched = entries.filter(entry => (!query || entry.file.filename.toLowerCase().includes(query)) && insightMatches(insights?.[entry.file.filename],controls.insightFilters ?? []));
   const visible = matched.filter(entry => entry.state !== 'hide');
   const counts = { show: 0, fold: 0, hide: 0 };
   for (const entry of entries) counts[entry.state as Visibility]++;

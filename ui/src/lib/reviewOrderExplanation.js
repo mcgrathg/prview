@@ -1,6 +1,6 @@
 import {roleLabels} from '../../../shared/review-organization/analysis.ts';
 
-const names={path:'File path',attention:'Attention',original:'Original',volume:'Changed lines',flow:'Import flow'};
+const names={path:'File path',attention:'Attention',original:'Original',volume:'Changed lines',flow:'Import flow',hotspots:'Hotspots'};
 const groups=[
   'Implementation / configuration / dependency manifests come first.',
   'Tests follow implementation / configuration / dependency manifests.',
@@ -21,10 +21,11 @@ function adjacentReason(entry, entries, order) {
   return prefix+'file path breaks an otherwise exact tie.';
 }
 
-export function explainReviewOrder(entry, entries, order) {
+export function explainReviewOrder(entry, entries, order, insights = null) {
   const file=entry.file;
   const lines=[`${names[order] ?? 'Review'} rank #${entry.rank} of ${entries.length} changed files (before filters/grouping).`];
   const size=`${file.changes.toLocaleString()} changed lines (+${file.additions.toLocaleString()} −${file.deletions.toLocaleString()}).`;
+  if(order==='hotspots'){const fact=insights?.[file.filename];return [...lines,fact?.score==null?'Hotspot score unavailable; unmeasured files follow measured files.':`${fact.complexity.total} summed function complexity × ${fact.activity.count} observed base-history commits = ${fact.score}.`, 'Same pinned Lizard metric and bounded history window; not a defect probability.',size];}
   if(order==='path')return [...lines,'Alphabetical file path, folders before files; no Attention reordering.',size];
   if(order==='original')return [...lines,'Captured PR file order; no Attention reordering.',size];
   if(order==='volume')return [...lines,size,adjacentReason(entry,entries,order),'More changed lines first; file path breaks ties.'].filter(Boolean);

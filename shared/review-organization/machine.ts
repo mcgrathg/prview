@@ -1,3 +1,4 @@
+import type { InsightFilter } from '../review-insights.ts';
 import { assign, fromPromise, setup } from 'xstate';
 import { roleLabels, type Role, type Visibility, type VisibilityRules } from './analysis.ts';
 import type { Capture } from './analysis.ts';
@@ -5,16 +6,17 @@ import type { ReferenceGraph } from './relationships.ts';
 
 export interface Comparison { repo: string; number: number; base: string; head: string }
 export const organizationKey = (comparison: Comparison) => `${comparison.repo}#${comparison.number}:${comparison.base}...${comparison.head}`;
-export type OrganizationOrder = 'path' | 'attention' | 'original' | 'volume' | 'flow';
+export type OrganizationOrder = 'path' | 'attention' | 'original' | 'volume' | 'flow' | 'hotspots';
 export interface Controls {
   order: OrganizationOrder; query: string; rules: VisibilityRules; overrides: Record<string, Visibility>;
-  root?: string; expanded: string[]; folders: boolean; collapsedFolders: string[];
+  insightFilters?: InsightFilter[]; root?: string; expanded: string[]; folders: boolean; collapsedFolders: string[];
 }
 export const defaultControls = (): Controls => ({ order: 'path', query: '', rules: {}, overrides: {}, expanded: [], folders: true, collapsedFolders: [] });
 interface Context extends Controls {
   comparison: Comparison; result: { capture: Capture; graph: ReferenceGraph } | null; error: string | null;
 }
 type Event =
+  | { type: 'INSIGHT.FILTER'; filter: InsightFilter }
   | { type: 'COMPARISON.SET'; comparison: Comparison }
   | { type: 'CONTROLS.RESTORE'; controls: Controls }
   | { type: 'RETRY' | 'SHOW_ALL' | 'GROUP.TOGGLE' }
@@ -46,12 +48,13 @@ export const organizationMachine = setup({
   id: 'organization', initial: 'loading',
   context: ({ input }) => ({ ...defaultControls(), comparison: input.comparison, result: null, error: null }),
   on: {
-    'CONTROLS.RESTORE': { actions: assign(({ event }) => ({ ...event.controls })) },
+    'CONTROLS.RESTORE': { actions: assign(({ event }) => ({ ...event.controls, insightFilters:event.controls.insightFilters })) },
     'COMPARISON.SET': {
       guard: ({ context, event }) => organizationKey(context.comparison) !== organizationKey(event.comparison),
       target: '.loading', reenter: true,
       actions: assign(({ event }) => ({ ...defaultControls(), comparison: event.comparison, result: null, error: null })),
     },
+    'INSIGHT.FILTER': { actions: assign(({context,event})=>{const filters=context.insightFilters ?? [];return {insightFilters:filters.includes(event.filter)?filters.filter(item=>item!==event.filter):[...filters,event.filter]};}) },
     'ORDER.SET': { actions: assign(({ event }) => ({ order: event.order, folders: event.order === 'path' })) },
     'QUERY.SET': { actions: assign(({ event }) => ({ query: event.query })) },
     'ROLE.SET': {
@@ -78,7 +81,7 @@ export const organizationMachine = setup({
     'GROUP.TOGGLE': { guard: ({ context }) => context.order !== 'flow', actions: assign(({ context }) => ({ folders: !context.folders })) },
     'FOLDER.TOGGLE': { guard: ({ context }) => context.folders, actions: assign(({ context, event }) => ({ collapsedFolders: context.collapsedFolders.includes(event.directory)
       ? context.collapsedFolders.filter(directory => directory !== event.directory) : [...context.collapsedFolders, event.directory] })) },
-    SHOW_ALL: { actions: assign(() => ({ rules: {}, overrides: {}, expanded: [], collapsedFolders: [] })) },
+    SHOW_ALL: { actions: assign(() => ({ rules: {}, overrides: {}, expanded: [], collapsedFolders: [], insightFilters:undefined })) },
   },
   states: {
     loading: { invoke: { src: 'load', input: ({ context }) => context.comparison,

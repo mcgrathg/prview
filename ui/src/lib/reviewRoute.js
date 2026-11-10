@@ -3,7 +3,7 @@ import { normalizeInvestigation, shareInvestigation } from './investigationState
 
 const ROLES = new Set(['source', 'test', 'configuration', 'manifest', 'documentation', 'snapshot', 'fixture', 'lockfile', 'unknown']);
 const VISIBILITY = new Set(['show', 'fold', 'hide']);
-const ORDERS = new Set(['path', 'attention', 'original', 'volume', 'flow']);
+const ORDERS = new Set(['path', 'attention', 'original', 'volume', 'flow', 'hotspots']);
 const DEFAULT_RULES = {};
 const MAX_PANES = 8;
 const MAX_CONTROL_PATHS = 200;
@@ -59,8 +59,9 @@ export function normalizeReviewControls(value = {}) {
   const expanded = Array.isArray(input.expanded) ? boundedPaths([...new Set(input.expanded.map(relativePath).filter(Boolean))]) : [];
   const collapsedFolders = Array.isArray(input.collapsedFolders) ? boundedPaths([...new Set(input.collapsedFolders.map(relativePath).filter(Boolean))]) : [];
   const order = ORDERS.has(input.order) ? input.order : 'path';
+  const insightFilters = Array.isArray(input.insightFilters) ? [...new Set(input.insightFilters.filter(item=>item==='complexity'||item==='cycle'))].sort() : [];
   const root = relativePath(input.root);
-  return { order, query: text(input.query, 1024), rules, overrides, ...(root ? { root } : {}), expanded, folders: order !== 'flow' && (input.folders === true || (order === 'path' && input.folders !== false)), collapsedFolders };
+  return { ...(insightFilters.length ? {insightFilters} : {}), order, query: text(input.query, 1024), rules, overrides, ...(root ? { root } : {}), expanded, folders: order !== 'flow' && (input.folders === true || (order === 'path' && input.folders !== false)), collapsedFolders };
 }
 
 /** Pure, bounded URL snapshot. Missing controls/panes/search leave those surfaces untouched. */

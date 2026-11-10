@@ -11,7 +11,7 @@
   import { beginReviewFileDrag } from './reviewFileDrag.js';
   import { relatedCandidates } from '../../../shared/review-organization/relationships.ts';
 
-  let { comparison, nativeFiles, selectedPath, onChange, onSelect, onOpenBeside = null, fileHref = null, onControlsChange = null, restoredControls = null } = $props();
+  let { comparison, nativeFiles, selectedPath, onChange, onSelect, onOpenBeside = null, fileHref = null, onControlsChange = null, restoredControls = null, insights = null, insightsLoading = false, insightsError = '' } = $props();
   let optionsPanel;
   export function showOptions() { optionsPanel?.show(); }
   export function setOrder(order) { send({type:'ORDER.SET', order}); }
@@ -27,7 +27,7 @@
   let capture = $derived(aligned && controls.result ? controls.result.capture
     : captureFromDiff(comparison.repo, comparison.number, comparison.base, comparison.head, nativeFiles));
   let graph = $derived(aligned && controls.result ? controls.result.graph : emptyGraph());
-  let model = $derived(organizationModel(capture, graph, controls));
+  let model = $derived(organizationModel(capture, graph, controls, insights));
   $effect(() => {
     const next = { ...model, graph, key: organizationKey(comparison) };
     if (aligned) untrack(() => onChange(next));
@@ -46,7 +46,7 @@
   let hiddenFiles = $derived(nativeEntries(model.hidden));
   let fileDetails = $derived(new Map(model.entries.map(entry => [entry.file.filename, {
     rank: controls.order === 'path' ? null : entry.rank,
-    title: `${entry.file.filename}\n${explainReviewOrder(entry,model.entries,controls.order).join('\n')}\n${entry.reason}`,
+    title: `${entry.file.filename}\n${explainReviewOrder(entry,model.entries,controls.order,insights).join('\n')}\n${entry.reason}`,
     label: `${entry.file.filename}, reading position ${entry.rank} of ${model.entries.length}, ${entry.file.additions} lines added, ${entry.file.deletions} lines removed${entry.state === 'show' ? '' : `, ${entry.state}`}`,
   }])));
   let customVisibility = $derived(Object.keys(controls.rules).length + Object.keys(controls.overrides).length);
@@ -60,9 +60,9 @@
   const send = event => {
     const before = actor.getSnapshot().context;
     actor.send(event);
-    const { order, query, rules, overrides, root, expanded, folders, collapsedFolders } = actor.getSnapshot().context;
-    const previous = { order: before.order, query: before.query, rules: before.rules, overrides: before.overrides, root: before.root, expanded: before.expanded, folders: before.folders, collapsedFolders: before.collapsedFolders };
-    const next = { order, query, rules, overrides, root, expanded, folders, collapsedFolders };
+    const { order, query, rules, overrides, root, expanded, folders, collapsedFolders, insightFilters } = actor.getSnapshot().context;
+    const previous = { order: before.order, query: before.query, rules: before.rules, overrides: before.overrides, root: before.root, expanded: before.expanded, folders: before.folders, collapsedFolders: before.collapsedFolders, insightFilters:before.insightFilters };
+    const next = { order, query, rules, overrides, root, expanded, folders, collapsedFolders, insightFilters };
     if (JSON.stringify(previous) !== JSON.stringify(next)) onControlsChange?.(next, event.type === 'QUERY.SET' ? 'replace' : 'push', ['FILE.TOGGLE','FOLDER.TOGGLE','GROUP.TOGGLE'].includes(event.type) ? undefined : model.paths.includes(selectedPath) ? selectedPath : model.paths[0] ?? null);
   };
   async function select(path) {
@@ -86,10 +86,11 @@
   <div class="organization-head"><strong>File and review options</strong><button onclick={() => send({ type: 'SHOW_ALL' })}>Show all</button></div>
   <label>Order by
     <select aria-label="Reading order" value={controls.order} onchange={event => send({ type: 'ORDER.SET', order: event.currentTarget.value })}>
-      <option value="path">File path</option><option value="attention">Attention</option><option value="original">Original</option><option value="volume">Changed lines</option>
+      <option value="hotspots" disabled={!insights}>Hotspots</option><option value="path">File path</option><option value="attention">Attention</option><option value="original">Original</option><option value="volume">Changed lines</option>
       <option value="flow" disabled={!graph.edges.length}>Import flow</option>
     </select>
   </label>
+  <details><summary>Evidence filters</summary><label class="group-toggle"><input type="checkbox" checked={controls.insightFilters?.includes('complexity') ?? false} onchange={()=>send({type:'INSIGHT.FILTER',filter:'complexity'})}/> Complexity increased</label><label class="group-toggle"><input type="checkbox" checked={controls.insightFilters?.includes('cycle') ?? false} onchange={()=>send({type:'INSIGHT.FILTER',filter:'cycle'})}/> New cycle in changed-file graph</label><p class="note">{insightsLoading?'Reading pinned evidence…':insightsError||'Filters use measured evidence, independently of reading order.'}</p></details>
   <label class="group-toggle"><input type="checkbox" checked={controls.folders} disabled={controls.order === 'flow'} onchange={() => send({ type: 'GROUP.TOGGLE' })} /> Group by folder</label>
   <details>
     <summary>Categories <span>{model.counts.show} shown · {model.counts.fold} folded · {model.counts.hide} hidden</span></summary>
@@ -122,7 +123,7 @@
       </label>
       <p class="note">{selected.file.roles.map(role => roleLabels[role]).join(' · ')} · {selected.file.language}</p>
       <ul class="note">{#each selected.file.classification as fact}<li>{fact.reason}</li>{/each}</ul>
-      <details><summary>Why this order?</summary><ul class="note">{#each explainReviewOrder(selected,model.entries,controls.order) as reason}<li>{reason}</li>{/each}</ul></details>
+      <details><summary>Why this order?</summary><ul class="note">{#each explainReviewOrder(selected,model.entries,controls.order,insights) as reason}<li>{reason}</li>{/each}</ul></details>
       <button class="follow" disabled={!graph.edges.some(edge => edge.from === selected.file.filename && edge.kind !== 'file_path' && !edge.typeOnly)} onclick={() => send({ type: 'FLOW.FOLLOW', path: selected.file.filename })}>Follow imports from this file</button>
       {#if related.length}<strong class="related-label">Related changed files</strong>{/if}
       {#each related as candidate (candidate.file.filename)}
@@ -134,14 +135,14 @@
     </details>
   {/if}
     </Popover></div>
-    {#if controls.order !== 'path' || customVisibility || !controls.folders}
-      <button class="active-options" title="Change the active review options" onclick={showOptions}>{controls.order === 'attention' ? 'Attention order' : controls.order === 'volume' ? 'Changed lines' : controls.order === 'flow' ? 'Import flow' : controls.order === 'original' ? 'Original order' : 'Flat list'}{#if model.counts.fold || model.counts.hide} · {model.counts.fold} folded · {model.counts.hide} hidden{/if}</button>
+    {#if controls.order !== 'path' || customVisibility || !controls.folders || controls.insightFilters?.length}
+      <button class="active-options" title="Change the active review options" onclick={showOptions}>{controls.order === 'hotspots' ? 'Hotspots' : controls.order === 'attention' ? 'Attention order' : controls.order === 'volume' ? 'Changed lines' : controls.order === 'flow' ? 'Import flow' : controls.order === 'original' ? 'Original order' : controls.folders ? 'File path' : 'Flat list'}{#if model.counts.fold || model.counts.hide} · {model.counts.fold} folded · {model.counts.hide} hidden{/if}{#if controls.insightFilters?.includes('complexity')} · complexity increased{/if}{#if controls.insightFilters?.includes('cycle')} · new cycle{/if}</button>
     {/if}
     {#if snapshot.matches('error')}<div class="note error" role="alert">Analysis unavailable. <button onclick={showOptions}>Details / retry</button></div>{/if}
   </div>
   <div class="queue" aria-label="Ordered changed files">
     <FileTree files={treeFiles} {selectedPath} {fileDetails} {fileHref} groupByFolder={controls.folders} onSelect={select} collapsedPaths={controls.collapsedFolders} onToggleDirectory={directory => send({type:'FOLDER.TOGGLE',directory})} {onOpenBeside} onDragFile={dragFile} />
-    {#if !model.visible.length}<p class="note">No visible files match. <button onclick={() => { send({ type: 'QUERY.SET', query: '' }); send({ type: 'SHOW_ALL' }); }}>Show all files</button></p>{/if}
+    {#if !model.visible.length}<p class="note">{controls.insightFilters?.length && insightsLoading ? 'Reading evidence for these filters…' : controls.insightFilters?.length && insightsError ? insightsError : 'No visible files match.'} <button onclick={() => { send({ type: 'QUERY.SET', query: '' }); send({ type: 'SHOW_ALL' }); }}>Show all files</button></p>{/if}
   {#if foldedEntries.length}
     <details open={Boolean(controls.query)}><summary>Folded files ({foldedEntries.length})</summary>
       <FileTree files={foldedFiles} {selectedPath} {fileDetails} {fileHref} groupByFolder={false} onSelect={select} {onOpenBeside} onDragFile={dragFile} />

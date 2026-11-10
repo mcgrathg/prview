@@ -849,3 +849,8 @@ export async function repoInsight({repo,sha,headRef,path,kind,symbol='',line=1,c
   if(!response.ok)throw new Error(`Source analysis request failed (${response.status}).`);
   return response.json();
 }
+
+export async function fetchReviewInsights(request,signal) {
+  const response=await fetch(`/api/review-insights?${new URLSearchParams({...request,number:String(request.number)})}`,{signal});
+  const body=await response.json();if(!response.ok)throw Error(body.error ?? `Insights request failed (${response.status}).`);return body;
+}

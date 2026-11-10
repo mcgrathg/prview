@@ -38,3 +38,14 @@ test('formatting reasons leaves captured data, engine facts and sort order intac
  const state=model('attention'),before=JSON.stringify({state,capture});for(const entry of state.entries)explainReviewOrder(entry,state.entries,'attention');expect(JSON.stringify({state,capture})).toBe(before);
  const single=model('attention');expect(explainReviewOrder(single.entries[0],[single.entries[0]],'attention').join('\n')).not.toContain('Ahead of');
 });
+
+test('Hotspots explains the measured formula and distinguishes missing evidence from zero',()=>{
+ const facts={'src/large.ts':{score:42,complexity:{total:7},activity:{count:6}}};
+ const state=organizationModel(capture,emptyGraph(),{...defaultControls(),order:'hotspots'},facts);
+ const measured=explainReviewOrder(state.entries[0],state.entries,'hotspots',facts).join('\n');
+ expect(measured).toContain('7 summed function complexity × 6 observed base-history commits = 42');
+ expect(measured).toContain('not a defect probability');
+ const missing=explainReviewOrder(state.entries.find(entry=>entry.file.filename==='src/no-patch.ts'),state.entries,'hotspots',facts).join('\n');
+ expect(missing).toContain('unavailable; unmeasured files follow measured files');
+ expect(missing).not.toContain('= 0');
+});

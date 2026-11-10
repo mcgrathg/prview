@@ -59,9 +59,9 @@ exec ${quote(realGit!)} "$@"
   expect(result.graph.edges[0]!.evidence[0]!.url).toContain(`/blob/${head}/src/main.ts#L1`);
 });
 
-test('organization endpoint refuses invalid, uncached and superseded comparisons before source work', async () => {
+for (const endpoint of ['review-organization','review-insights']) test(`${endpoint} refuses invalid, uncached and superseded comparisons before source work`, async () => {
   const handle = buildFetchHandler(4900);
-  const request = (query: string) => handle(new Request(`http://127.0.0.1:4900/api/review-organization?${query}`));
+  const request = (query: string) => handle(new Request(`http://127.0.0.1:4900/api/${endpoint}?${query}`));
   expect((await request('repo=../escape&number=1&head=bad&base=bad')).status).toBe(400);
   const base = 'd'.repeat(40), head = 'e'.repeat(40);
   const params = new URLSearchParams({ repo: 'sample/validation', number: '42', base, head });

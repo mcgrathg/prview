@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+analysis_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+python3 -m venv "$analysis_root/node_modules/.prview-analysis"
+"$analysis_root/node_modules/.prview-analysis/bin/python" -I -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r "$analysis_root/scripts/review-analysis-requirements.txt"
+"$analysis_root/node_modules/.prview-analysis/bin/python" -I -c 'import importlib.metadata; print("Review complexity ready: Lizard " + importlib.metadata.version("lizard"))'

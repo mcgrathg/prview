@@ -46,6 +46,8 @@
     dismissedViewed = new Set(),
     onToggleViewed = null,
     onOpenBeside = null,
+    insights = null,
+    onInspectInsights = null,
     onHoverFile = null,
     repo,
     number = null,
@@ -2449,6 +2451,9 @@
         {:else if !enhancedReview && !isCollapsed && editable && !file.isBinary && !file.isDeleted && !file.isUnchangedRename}
           <button class="whole-btn file-edit-btn" onclick={(event) => startFileEdit(file, toolbarEditPlacement(event.currentTarget))}>Edit</button>
         {/if}
+        {#if enhancedReview && onInspectInsights && insights?.[file.path]?.signals}
+          <button class="insights-button" data-event="open-review-insights" title="Inspect measured changes and base-revision history" onclick={event=>onInspectInsights(event,file.path)}><span aria-hidden="true">•</span> Insights · {insights[file.path].signals}</button>
+        {/if}
         {#if onToggleViewed}
           <button
             class="viewed-btn"
@@ -2465,6 +2470,7 @@
         {/if}
         {#if enhancedReview}
           <Popover label={`File actions for ${file.path}`} closeOnAction>
+            {#if onInspectInsights}<button class="menu-action" onclick={event=>onInspectInsights(event,file.path)}>Insights and coverage</button>{/if}
             {#if onOpenBeside}<button class="menu-action" onclick={()=>onOpenBeside(file.path)}>Open beside</button>{/if}
             {#if !isCollapsed && !file.isBinary && !file.isDeleted && !file.isUnchangedRename}<button class="menu-action" disabled={whole?.status === 'loading'} onclick={()=>toggleWholeFile(file)}>{whole?.status === 'ready' ? 'Show diff hunks' : whole?.status === 'loading' ? 'Loading full file…' : 'Expand all lines'}</button>{/if}
             {#if !isCollapsed && editable && !file.isBinary && !file.isDeleted && !file.isUnchangedRename}<button class="menu-action" onclick={event=>startFileEdit(file,toolbarEditPlacement(event.currentTarget))}>Edit file</button>{/if}
@@ -2681,6 +2687,7 @@
 <CodeActionsMenu {repo} bind:this={codeMenu} onInspect={enhancedReview ? inspectSymbol : null} onDefinition={onLookupDefinition} onReferences={onLookupReferences} onHistory={onOpenHistory} />
 
 <style>
+  .insights-button{flex:none;border:1px solid var(--border-soft);border-radius:4px;background:transparent;color:var(--text-dim);font:10px var(--sans);padding:4px 6px;cursor:pointer;white-space:nowrap;}.insights-button span{color:var(--warn,#d8b36b);}.insights-button:focus-visible{outline:2px solid var(--link);}
 
   .viewed-dismissed, .file-edit-draft-status { color: var(--text-dim); font-size: 12px; }
   .file-edit-draft-status { padding: 0 12px 8px; }

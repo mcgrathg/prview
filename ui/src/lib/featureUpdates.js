@@ -183,6 +183,17 @@ export const FEATURE_UPDATES = [
       { title: 'Keep the sorting you chose', body: 'Flat lists retain the engine’s exact order and global ranks through filtering. Folder grouping and collapse remain optional; existing review URLs still restore your choices.' },
     ],
   },
+  {
+    version: 1794282538998,
+    title: 'Understand changes with measured review insights',
+    summary: 'Inspect function complexity changes, relevant Git history and changed-file dependencies without leaving the PR.',
+    howToTry: 'Click Insights beside a file with findings, or choose Insights and coverage in its ⋯ menu. Change, History and Dependencies share the same pinned evidence in every reading order. File and review options adds Hotspots and optional evidence filters.',
+    changes: [
+      { title: 'Quiet context beside the code', body: 'Measured complexity increases link to highlighted changed lines. History shows base-anchored commits, contributors and repeated co-change; unchanged related files open as read-only rail context. Close or Escape returns focus to the review.' },
+      { title: 'An explainable reading order', body: 'Hotspots combines measured function complexity with observed historical activity. Rank tooltips explain the formula. Complexity increased and new-cycle filters preserve global ranks and restore through the URL.' },
+      { title: 'Facts with their limits', body: 'The rail identifies the analyzer, revisions and bounded coverage. Dependency evidence covers supported changed JS/TS files. Optional Lizard setup enables function metrics; missing or incomplete measurements remain explicitly unavailable. No AI judgment or repository scripts are involved.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';

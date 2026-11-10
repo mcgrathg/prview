@@ -1,0 +1,57 @@
+<script>
+  import {onMount} from 'svelte';
+  let {snapshot,repo,onEvent,onNavigate,onClose}=$props();
+  let closeButton;
+  const result=$derived(snapshot.context.result);
+  const file=$derived(result?.files[snapshot.context.file]);
+  const request=$derived(snapshot.context.request);
+  const increases=$derived(file?.complexity.changes.filter(change=>change.delta!==null && change.delta>0) ?? []);
+  const date=value=>value?new Date(value*1000).toLocaleDateString():'Unavailable';
+  onMount(()=>closeButton?.focus({preventScroll:true}));
+  function jump(change){const metric=change.head ?? change.base;if(metric)onNavigate({path:file.path,...change.anchor});}
+  function key(event){if(event.key==='Escape'){event.preventDefault();event.stopPropagation();onClose();}else if(!event.metaKey&&!event.ctrlKey&&!event.altKey)event.stopPropagation();}
+</script>
+<div class="insights-rail" role="dialog" aria-modal="false" tabindex="-1" aria-label="Review insights" data-code-overlay onkeydown={key}>
+  <header><strong>Insights</strong><button bind:this={closeButton} aria-label="Close insights" onclick={onClose}>×</button></header>
+  <div class="identity"><strong>{snapshot.context.file}</strong><small>{(result?.diffBase ?? request?.base)?.slice(0,7)} → {request?.head?.slice(0,7)}</small></div>
+  <nav aria-label="Insight views">{#each [['change','Change'],['history','History'],['dependencies','Dependencies']] as [id,label]}<button aria-pressed={snapshot.context.tab===id} onclick={()=>onEvent({type:'TAB',tab:id})}>{label}</button>{/each}</nav>
+  <div class="insight-body">
+  {#if snapshot.matches('loading')}<p role="status">Reading pinned code and history… The review remains available.</p>
+  {:else if snapshot.matches('error')}<p role="alert">{snapshot.context.error}</p><button class="link" onclick={()=>onEvent({type:'RETRY'})}>Retry insights</button>
+  {:else if !file}<p>No evidence is available for this path in the captured comparison.</p>
+  {:else if snapshot.context.tab==='change'}
+    {#if file.complexity.status!=='ok'}<section><h3>Function complexity unavailable</h3><p>{file.complexity.reason}</p>{#if !result.provider.available}<p class="detail">Optional Lizard analysis is not ready on this server. History and dependency context remain available.</p><button class="link" onclick={()=>onEvent({type:'RETRY'})}>Retry analyzer</button>{/if}</section>
+    {:else}
+      {#each increases as change}
+        <section><span class="kind">{change.delta>0?'Complexity increased':change.kind==='removed'?'Removed function':change.kind==='added'?'Added declaration':change.kind==='unmatched'?'Unmatched declaration':'Changed function'}</span><h3 title={(change.head ?? change.base).signature}>{change.name}</h3>
+        <div class="measurement">{change.base?.complexity ?? (change.kind==='added'?'New':'?')} <span>→</span> <strong class:increased={change.delta>0}>{change.head?.complexity ?? 'Removed'}</strong></div>
+        <p>Cyclomatic complexity · Lizard {result.provider.version}.{#if change.kind==='unmatched'} The previous function could not be matched unambiguously.{/if}</p>
+        <button class="link" data-event="jump-insight-function" onclick={()=>jump(change)}>Show {change.anchor.side==='right'?'changed':'original'} code · line {change.anchor.line} →</button>
+        </section>
+      {:else}<section><h3>No measured complexity increase</h3><p>{file.complexity.changes.length} changed declarations measured. Added, removed and unmatched functions are listed separately below.</p></section>{/each}
+      {#if file.complexity.changes.length}<details><summary>All changed function measurements ({file.complexity.changes.length})</summary>{#each file.complexity.changes as change}<button class="link related" data-event="jump-insight-function" onclick={()=>jump(change)}>{change.name}<small>{change.base?.complexity ?? (change.kind==='added'?'New':'Unmatched')} → {change.head?.complexity ?? 'Removed'} · line {change.anchor.line}</small></button>{/each}</details>{/if}
+      {#if file.complexity.limited}<p role="status">Function inventory was truncated; hotspot ranking is unavailable for this file.</p>{/if}
+    {/if}
+    {#if file.activity.status==='ok'}<section><span class="kind">Recent activity · file context</span><h3>{file.activity.count} observed commits</h3><p>{file.activity.authors.length} contributors in the base-anchored history window. Frequency is context, not a defect finding.</p><button class="link" onclick={()=>onEvent({type:'TAB',tab:'history'})}>See the relevant history →</button></section>{/if}
+    {#if file.newCycle}<section><span class="kind">Dependency observation</span><h3>New cycle in the resolved changed-file graph</h3><button class="link" onclick={()=>onEvent({type:'TAB',tab:'dependencies'})}>Inspect cycle evidence →</button></section>{/if}
+    <details><summary>How this was measured</summary><p>Function names are paired only when unique within complete file inventories. Source comments cannot suppress measurement. Added, removed and ambiguous declarations keep separate measurements. Complexity is a structural metric, not a performance bound.</p><p>Lizard {result.provider.version ?? 'unavailable'} · {result.coverage.measuredFiles} measured files. Diff base {result.diffBase.slice(0,7)} → head {result.head.slice(0,7)}.</p></details>
+  {:else if snapshot.context.tab==='history'}
+    <section><span class="kind">History at the PR base</span><h3>{file.activity.status==='ok'?`${file.activity.count} observed commits`:'History unavailable'}</h3><p>{date(result.history.from)} – {date(result.history.until)} · {result.history.days} days ending at target base {result.base.slice(0,7)}. The PR’s commits are excluded.</p>{#if result.history.reason}<p role="status">{result.history.reason}</p>{/if}<p class="detail">{result.history.commitsExamined} non-merge commits examined{result.history.limited?' · bounded sample; totals may be incomplete':''}. History follows the base path; earlier renames are not followed.</p></section>
+    {#each file.activity.commits as commit}<article><a data-event="open-insight-commit" href={`https://github.com/${repo}/commit/${commit.sha}`} target="_blank" rel="noopener noreferrer" title="Open commit on GitHub">{commit.title || 'Untitled commit'} ↗</a><small>{commit.sha.slice(0,7)} · {commit.author} · {date(commit.timestamp)}</small></article>{/each}
+    {#if file.activity.count>file.activity.commits.length}<p>Showing the latest {file.activity.commits.length} observed commits touching this path.</p>{/if}
+    <section><span class="kind">Often changed together</span>{#each file.activity.related as related}<button class="related link" data-event="jump-insight-cochange" title={related.path} onclick={()=>onNavigate({path:related.path,line:1,side:'right'})}>{related.path}<small>{related.commits} shared commits · observed co-change</small></button>{:else}<p>No repeated co-change observed in this history sample.</p>{/each}<p class="detail">Shared commits do not establish a code dependency.</p></section>
+  {:else}
+    <p class="scope">Resolved relative imports among supported changed JS/TS files. This is a partial graph.</p>
+    {#each file.dependencies.cycles as cycle}<section><span class="kind">{cycle.isNew?'New in resolved comparison':'Existing resolved cycle'}</span><h3>Import cycle</h3>{#each cycle.paths as path}<button class="link related" data-event="jump-insight-cycle" onclick={()=>onNavigate({path,line:1,side:'right'})}>{path} →</button>{/each}<p>Cycle group, not an execution trace. Type-only imports are excluded.</p></section>{:else}<section><h3>No cycle observed in this scope</h3><p>Unresolved and unchanged modules are outside this analysis.</p></section>{/each}
+    <section><h3>{file.dependencies.dependents.length} changed modules import this file</h3>{#each file.dependencies.dependents as edge}<button class="link related" data-event="jump-insight-dependent" onclick={()=>onNavigate({path:edge.path,line:edge.line,side:'right'})}>{edge.path}:{edge.line}</button>{/each}</section>
+    <section><h3>Imports to changed modules</h3>{#each file.dependencies.imports as edge}<button class="link related" data-event="jump-insight-import" onclick={()=>onNavigate({path:file.path,line:edge.line,side:'right'})}>{edge.path}<small>Show import · line {edge.line}</small></button>{:else}<p>No resolved imports to changed modules.</p>{/each}</section>
+  {/if}
+  {#if result}<details class="coverage"><summary>Coverage and limits</summary><p>{result.coverage.measuredFiles} files measured; {result.coverage.headParsed} head and {result.coverage.baseParsed} base source files parsed. Source candidates: {result.coverage.selectedFiles} / {result.coverage.totalFiles} changed files.</p>{#each result.coverage.limitations as reason}<p>{reason}</p>{/each}</details>{/if}
+  </div>
+</div>
+<style>
+ .insights-rail{grid-column:4;grid-row:2;position:sticky;top:calc(var(--review-toolbar-height,48px) + 7px);align-self:start;height:calc(var(--general-height) - var(--review-toolbar-height,48px) - 15px);min-height:200px;min-width:0;display:flex;flex-direction:column;border-left:1px solid var(--border);background:var(--panel);color:var(--text);font:12px/1.5 var(--sans);z-index:24;}
+ header{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--border-soft);}header button{border:0;background:transparent;color:var(--text-dim);font-size:19px;cursor:pointer;}.identity{padding:9px 14px;border-bottom:1px solid var(--border-soft);font:10px/1.6 var(--font-mono,monospace);overflow-wrap:anywhere;}.identity strong{font-weight:400;display:block;}.identity small{color:var(--text-dim);}
+ nav{display:flex;gap:12px;padding:5px 14px 0;border-bottom:1px solid var(--border-soft);}nav button{border:0;border-bottom:2px solid transparent;background:transparent;color:var(--text-dim);font:11px var(--sans);padding:8px 0;cursor:pointer;}nav button[aria-pressed=true]{border-color:var(--link);color:var(--text);}.insight-body{overflow:auto;flex:1;min-height:0;padding:0 14px 18px;overflow-wrap:anywhere;}section{padding:14px 0;border-bottom:1px solid var(--border-soft);}h3{font-size:12px;font-weight:550;margin:5px 0 7px;}p{color:var(--text-dim);font-size:11px;line-height:1.7;margin:8px 0;}.kind{color:var(--warn,#d8b36b);font-size:10px;}.measurement{font:21px/1.8 var(--font-mono,monospace);}.measurement span{color:var(--text-faint);font-size:15px;margin:0 8px;}.measurement strong{font-weight:400;}.increased{color:var(--warn,#d8b36b);}.link{border:0;background:transparent;color:var(--link);padding:7px 0;cursor:pointer;font:11px/1.6 var(--sans);text-align:left;}.related{display:block;max-width:100%;overflow-wrap:anywhere;}.related small{display:block;font-size:10px;color:var(--text-dim);}details{padding:11px 0;color:var(--text-dim);font-size:10px;}summary{cursor:pointer;}.detail,.scope{font-size:10px;}article{padding:9px 0;border-bottom:1px solid var(--border-soft);}article a{display:block;color:var(--link);font-size:11px;text-decoration:none;}article small{display:block;color:var(--text-dim);font-size:10px;margin-top:4px;}.coverage{border-top:1px solid var(--border-soft);margin-top:8px;}button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var(--link);outline-offset:2px;}
+ @media(max-width:999px){.insights-rail{position:fixed;top:56px;right:6px;bottom:8px;width:min(350px,calc(100vw - 55px));height:auto;box-shadow:-8px 0 24px #0007;border:1px solid var(--border);border-radius:7px;z-index:85;}}
+</style>

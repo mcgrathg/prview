@@ -1,4 +1,8 @@
 <script>
+  import ReviewInsights from './ReviewInsights.svelte';
+  import {reviewInsightsMachine} from './reviewInsightsMachine.js';
+  import {fetchReviewInsights} from './api.js';
+  import {popoverReturnTarget} from './dom.js';
   import Popover from "./Popover.svelte";
   import { quickCommands, openQuickCommands, FIND_FILE_EVENT } from "./quickCommands.svelte.js";
   import { reviewMode } from "./reviewMode.js";
@@ -305,6 +309,41 @@
   let organizationPanel = $state(null);
   let organization = $state.raw(null);
   let organizationComparison = $derived({ repo, number, base: range?.base ?? pr?.baseRefOid ?? "", head: range?.head ?? pr?.headRefOid ?? "" });
+  const insightsActor=createActor(reviewInsightsMachine,{input:{load:fetchReviewInsights}}).start();
+  let insightsSnapshot=$state(insightsActor.getSnapshot()),insightsReturnFocus;
+  const insightsSubscription=insightsActor.subscribe(next=>insightsSnapshot=next);
+  onDestroy(()=>{insightsSubscription.unsubscribe();insightsActor.stop();});
+  const insightFiles=$derived(insightsSnapshot.matches('ready') && insightsSnapshot.context.result?.repo===organizationComparison.repo && insightsSnapshot.context.result?.base===organizationComparison.base && insightsSnapshot.context.result?.head===organizationComparison.head ? insightsSnapshot.context.result.files : null);
+  $effect(()=>{
+    const active=organizationEnabled && tab==='files' && diffState==='ready' && organizationComparison.head && organizationComparison.base;
+    const request={...organizationComparison};
+    untrack(()=>{const before=insightsActor.getSnapshot().context.request;if(!active){if(before)insightsActor.send({type:'CANCEL'});return;}if(JSON.stringify(before)!==JSON.stringify(request))insightsActor.send({type:'LOAD',request});});
+  });
+  function inspectInsights(event,path){
+    if(!path)return;
+    insightsReturnFocus=popoverReturnTarget(event?.currentTarget ?? document.activeElement);
+    if(reviewState.references)navigateReview({references:undefined});
+    insightsActor.send({type:'OPEN',path});
+  }
+  function dismissInsights(){insightsActor.send({type:'CLOSE'});queueMicrotask(()=>{if(insightsReturnFocus?.isConnected)insightsReturnFocus.focus({preventScroll:true});});}
+  function jumpInsight(target){
+    if(!finishFileEdit())return;
+    const captured=insightsSnapshot.context.request;
+    if(!captured || captured.repo!==organizationComparison.repo || captured.base!==organizationComparison.base || captured.head!==organizationComparison.head)return;
+    const original=target.side==='left';
+    const changed=comparisonFiles.find(file=>(original ? file.previousPath ?? file.path : file.path)===target.path || file.path===target.path);
+    const controls=reviewState.controls ? {...reviewState.controls,query:'',insightFilters:undefined} : undefined;
+    const state={...reviewState,controls,references:undefined};
+    restoredLocation='';
+    if(changed){
+      if(controls)controls.overrides={...controls.overrides,[changed.path]:'show'};
+      navigateReviewState(reviewFileDestination(state,{file:changed.path,line:target.line,side:original?'left':'right',view:'diff',rev:captured.head,base:captured.base}));
+    }else{
+      const source=insightsSnapshot.context.result?.files[insightsSnapshot.context.file];
+      navigateReviewState(reviewDefinitionDestination(state,{path:target.path,line:target.line},{sha:insightsSnapshot.context.result.diffBase,path:source?.basePath ?? insightsSnapshot.context.file,symbol:'History context',position:{line:1,character:0}},{...organizationComparison,files:comparisonFiles}));
+    }
+  }
+
   let organizationActive = $derived(organizationEnabled && organization?.key === organizationKey(organizationComparison));
   let files = $derived.by(() => {
     if (!organizationActive) return comparisonFiles;
@@ -3383,7 +3422,7 @@
     quickCommands.review = [
       {id:'split-diff',title:'Switch to split diff',description:'Display · active code pane',keywords:'side by side layout',disabledReason:unavailable,run:()=>setReviewLayout('split')},
       {id:'unified-diff',title:'Switch to unified diff',description:'Display · active code pane',keywords:'inline layout',disabledReason:unavailable,run:()=>setReviewLayout('unified')},
-      ...[['path','file path'],['attention','Attention'],['original','original order'],['volume','changed lines'],['flow','import flow']].map(([order,name])=>({id:`order-${order}`,title:`Sort files by ${name}`,description:'Review order · saved in the URL',keywords:'sorting organize',disabledReason:unavailable || (order==='flow' && !organization?.graph?.edges.length ? 'No import relationships available.' : ''),run:()=>organizationPanel?.setOrder(order)})),
+      ...[["hotspots","Hotspots"],['path','file path'],['attention','Attention'],['original','original order'],['volume','changed lines'],['flow','import flow']].map(([order,name])=>({id:`order-${order}`,title:`Sort files by ${name}`,description:'Review order · saved in the URL',keywords:'sorting organize',disabledReason:unavailable || (order==='hotspots' && !insightFiles ? 'Pinned insights are not ready.' : '') || (order==='flow' && !organization?.graph?.edges.length ? 'No import relationships available.' : ''),run:()=>organizationPanel?.setOrder(order)})),
       {id:'open-beside',title:'Open current file beside',description:'Workspace · keep another code pane',keywords:'split panel dock',disabledReason:unavailable || (!selectedPath ? 'Select a changed file first.' : ''),run:()=>openBeside(selectedPath)},
       {id:'file-options',title:'Show file options and related files',description:'Categories, ranking reasons and source analysis',keywords:'filter details relationships visibility',disabledReason:unavailable,run:showReviewOptions},
       {id:'toggle-sidebar',title:'Toggle file sidebar',description:'Layout · collapse or pin changed files',keywords:'panel tree navigation',run:()=>reviewSidebar?.togglePinned()},
@@ -3776,7 +3815,7 @@
       {/if}
 
       {#if tab === "files"}
-        <div class="files-layout">
+        <div class="files-layout" class:insights-open={organizationEnabled && Boolean(insightsSnapshot.context.file) && !reviewState.references}>
           <div class="files-toolbar" use:measureReviewToolbar>
             <div class="toolbar-left">
               {#if organizationEnabled}<button class="compact-pr toolbar-btn" title={`PR #${number}: ${pr.title} · open Conversation`} onclick={()=>goToTab("conversation")}>#{number}</button>{/if}
@@ -3809,6 +3848,7 @@
                 <button class="toolbar-btn review-submit" disabled={!canReview} title={canReview ? 'Open the native review composer without submitting' : 'Review submission is not available for this PR'} onclick={()=>{if(goToTab('conversation'))requestAnimationFrame(()=>focusWhenReady('#verdict-control'));}}>Review changes</button>
                 <Popover label="Review tools" text="⋯" closeOnAction>
                   {#if workspaceEnabled}<a class="menu-action" href={`#/pr/${repo}/${number}`} onclick={event=>guardTabNavigation(event,'conversation')}>Conversation</a><a class="menu-action" href={`#/pr/${repo}/${number}/agents`} onclick={event=>guardTabNavigation(event,'agents')}>PR agents</a><a class="menu-action" href={`#/pr/${repo}/${number}/actions`} onclick={event=>guardTabNavigation(event,'actions')}>PR actions</a><hr/>{/if}
+                  <button class="menu-action" disabled={!comparisonFiles.length} onclick={event=>inspectInsights(event,selectedPath ?? comparisonFiles[0]?.path)}>Insights and coverage</button>
                   <button class="menu-action" onclick={()=>openQuickCommands()}>Commands <small>⌘⇧P</small></button>
                   <button class="menu-action" onclick={() => openBeside(selectedPath ?? files[0]?.path)} disabled={!files.length}>Open beside</button>
                   <button class="menu-action" disabled={viewedSnapshot.matches('saving') || viewedSnapshot.matches('loading')} onclick={()=>viewedActor.send({type:'REFRESH'})}>Refresh Viewed from GitHub</button>
@@ -3822,7 +3862,7 @@
           {#if investigationsEnabled && diffState === 'ready'}{#key `${repo}#${number}`}<div class="investigation-slot"><InvestigationWorkbench onReviewDefinition={(definition,request)=>{if(!finishFileEdit())return;restoredLocation='';navigateReviewState(reviewDefinitionDestination({...reviewState,investigation:undefined},definition,request,{...organizationComparison,files:comparisonFiles}));}} bind:this={investigationWorkbench} changedPaths={comparisonFiles.map(file=>file.path)} currentHead={pr.headRefOid} currentBase={pr.baseRefOid} pendingReviewsEnabled={prefs.pendingReviewsEnabled} {pendingReview} {pendingReviewStale} onSubmitDraft={submitFindingDraft} {repo} {number} headRef={pr.headRefName} review={reviewState} restored={reviewLocation?.investigation} onRoute={(investigation,mode)=>navigateReview({investigation},mode)} /></div>{/key}{/if}
           {#snippet sidebarContents()}
             {#if organizationEnabled && diffState === "ready" && comparisonFiles.length}
-              <ReviewOrganization bind:this={organizationPanel} comparison={organizationComparison} nativeFiles={comparisonFiles} {selectedPath} onChange={receiveOrganization} onSelect={path => { openChangedFile(path); reviewSidebar?.dismiss(); }} onOpenBeside={path => { openBeside(path); reviewSidebar?.dismiss(); }} fileHref={path => buildReviewHash(repo, number, { ...reviewState, file: path, view: "diff", line: null, rev: organizationComparison.head, base: organizationComparison.base })} restoredControls={reviewState.controls} onControlsChange={(controls, mode, file) => navigateReview({controls,...(!workspaceEnabled && file !== undefined ? {file,...(file !== reviewState.file ? {line:null} : {})} : {})}, mode)} />
+              <ReviewOrganization insights={insightFiles} insightsLoading={insightsSnapshot.matches('loading')} insightsError={insightsSnapshot.context.error} bind:this={organizationPanel} comparison={organizationComparison} nativeFiles={comparisonFiles} {selectedPath} onChange={receiveOrganization} onSelect={path => { openChangedFile(path); reviewSidebar?.dismiss(); }} onOpenBeside={path => { openBeside(path); reviewSidebar?.dismiss(); }} fileHref={path => buildReviewHash(repo, number, { ...reviewState, file: path, view: "diff", line: null, rev: organizationComparison.head, base: organizationComparison.base })} restoredControls={reviewState.controls} onControlsChange={(controls, mode, file) => navigateReview({controls,...(!workspaceEnabled && file !== undefined ? {file,...(file !== reviewState.file ? {line:null} : {})} : {})}, mode)} />
             {:else}
               <FileTree files={treeFiles} {selectedPath} hoveredPath={hoveredDiffPath} onSelect={selectFileByPath} onContextMenu={prefs.reviewFileMenuEnabled ? openFileMenu : null} />
             {/if}
@@ -3865,6 +3905,8 @@
                 {number}
                 showPrLink={!organizationEnabled}
                 enhancedReview={organizationEnabled}
+                insights={insightFiles}
+                onInspectInsights={organizationEnabled ? inspectInsights : null}
                 onOpenBeside={organizationEnabled ? path=>openBeside(path) : null}
                 viewedDisabled={organizationEnabled && (!viewedSnapshot.matches("ready") || !viewedAligned || rangeKey !== "all")}
                 onWarmFile={warmDiffFile}
@@ -3910,6 +3952,7 @@
               {/if}
             {/if}
           </div>
+          {#if organizationEnabled && insightsSnapshot.context.file && !reviewState.references}<ReviewInsights snapshot={insightsSnapshot} {repo} onEvent={event=>insightsActor.send(event)} onNavigate={jumpInsight} onClose={dismissInsights}/>{/if}
         </div>
       {:else if tab === "agents"}
         <div class="agents-layout">
@@ -4923,6 +4966,8 @@
                 files={[paneFile]}
                 {number}
                 enhancedReview={organizationEnabled}
+                insights={(!pane.rev || pane.rev===organizationComparison.head) && (!pane.base || pane.base===organizationComparison.base) ? insightFiles : null}
+                onInspectInsights={organizationEnabled && (!pane.rev || pane.rev===organizationComparison.head) && (!pane.base || pane.base===organizationComparison.base) ? inspectInsights : null}
                 onOpenBeside={organizationEnabled ? path=>openBeside(path) : null}
                 showPrLink={false}
                 viewedDisabled={!viewedSnapshot.matches("ready") || !viewedAligned || (pane.rev && pane.rev !== pr.headRefOid) || (pane.base && pane.base !== pr.baseRefOid)}
@@ -8083,4 +8128,5 @@
   @media(max-width:940px){.code-first .files-layout{grid-template-columns:48px 0 minmax(0,1fr);}.code-first .files-toolbar{grid-column:1/-1;flex-wrap:wrap;}.code-first .files-layout:has(> :global(.review-sidebar[data-pinned='true'])){grid-template-columns:min(240px,38%) 4px minmax(0,1fr);}.code-first .files-layout > :global(.review-sidebar.pinned:not(.app)){position:sticky;grid-column:1;grid-row:2;margin-bottom:0;}.code-first .files-layout:has(> :global(.review-sidebar[data-pinned='true'])) > .diff-pane{grid-column:3;grid-row:2;}.code-first .files-layout .diff-pane{width:auto;margin-inline:0;}.code-first .files-layout .tree-resizer{display:block;}}
   @media(max-width:650px){.code-first .files-toolbar .quick-switch .quick-switch-key{display:inline;}.code-first .files-toolbar .viewed-error{max-width:90px;}.code-first .files-toolbar > .toolbar-left{flex-shrink:0;max-width:100%;flex-wrap:wrap;}.code-first .files-toolbar .quick-switch .quick-switch-label,.code-first .viewed-sync{display:none;}.code-first .files-toolbar .toolbar-left{gap:3px;}.code-first .files-toolbar .toolbar-btn{padding:5px 4px;font-size:10px;}.code-first .files-layout:has(> :global(.review-sidebar[data-pinned='true'])){grid-template-columns:min(180px,38%) 4px minmax(0,1fr);}.calm-review{padding-inline:5px;}}
 
+  @media(min-width:1000px){.code-first .files-layout.insights-open{grid-template-columns:min(var(--tree-width),27%) 6px minmax(0,1fr) min(350px,30%);}.code-first .files-layout.insights-open:has(> :global(.review-sidebar[data-pinned='false'])){grid-template-columns:48px 0 minmax(0,1fr) min(350px,30%);}}
 </style>

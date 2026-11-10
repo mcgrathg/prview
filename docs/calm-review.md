@@ -38,3 +38,7 @@ Final tracked-source verification passed 98 tests / 454 assertions, including th
 The compact-sort follow-up checked every order on the real 103-file PR: 32px rows, original/size/flow ordering, rank reasons and compact contextual actions. Filtered analysis.ts retained global Attention rank #2 through reload; a collapsed selected folder also restored correctly. Open beside created two native panes and Back restored the single review. Six folded and six hidden fixture files retained compact rows and selection behavior. An expanded 101-file hidden section kept a stable scroll height on repeated scrolling; the main virtualized spacer stayed bounded. Sidebar scrolling left the code scroll position unchanged, and narrow rows retained their 44px touch height. No GitHub writes were performed.
 
 Final follow-up verification passed 65 focused tests / 336 assertions and the Node Vite production build from staged source. The sorting engine and URL control format are unchanged.
+
+## Contextual evidence
+
+Insights is available in every reading order through file actions or Review tools. A quiet header entry appears only for measured complexity increases, new resolved cycles or frequent historical activity. The contextual Change/History/Dependencies rail, optional Hotspots order and evidence filters keep the compact defaults intact. See [review insights](review-insights.md) for setup, measurement scope and the state contract.
