@@ -319,10 +319,14 @@
     const request={...organizationComparison};
     untrack(()=>{const before=insightsActor.getSnapshot().context.request;if(!active){if(before)insightsActor.send({type:'CANCEL'});return;}if(JSON.stringify(before)!==JSON.stringify(request))insightsActor.send({type:'LOAD',request});});
   });
-  $effect(()=>{
+  const insightsPath=$derived.by(()=>{
     const origin=workspaceEnabled ? activeReviewPane : reviewState.view==='source' ? reviewState : null;
     const aligned=(!origin?.rev || origin.rev===organizationComparison.head) && (!origin?.base || origin.base===organizationComparison.base);
-    const path=organizationEnabled && tab==='files' && aligned ? (origin?.view==='source' ? origin.file : selectedPath) : null;
+    return organizationEnabled && tab==='files' && aligned ? (origin?.view==='source' ? origin.file : selectedPath) : null;
+  });
+  const insightsOpen=$derived(Boolean(insightsSnapshot.context.file) && !reviewState.references);
+  $effect(()=>{
+    const path=insightsPath;
     untrack(()=>insightsActor.send({type:'FILE.CHANGED',path}));
   });
   function inspectInsights(event,path){
@@ -3851,10 +3855,10 @@
               {#if organizationEnabled}
                 <div class="diff-layout-options" aria-label="Diff layout"><button class="toolbar-btn" aria-pressed={reviewState.layout === 'unified'} onclick={() => setReviewLayout('unified')}>Unified</button><button class="toolbar-btn" aria-pressed={reviewState.layout === 'split'} onclick={() => setReviewLayout('split')}>Split</button></div>
                 <button class="toolbar-btn quick-switch" title="Find files · Cmd/Ctrl+P. Commands · Cmd/Ctrl+Shift+P" onclick={findReviewFile}><span class="quick-switch-label">Quick switch</span> <span class="quick-switch-key">⌘P</span></button>
+                <button class="toolbar-btn insights-toggle" data-event="toggle-review-insights" aria-pressed={insightsOpen} disabled={diffState!=='ready' || !insightsPath} title={insightsOpen?'Close Insights':'Open Insights and coverage for the current file'} onclick={event=>insightsOpen ? dismissInsights() : inspectInsights(event,insightsPath)}><span aria-hidden="true">◇</span> Insights</button>
                 <button class="toolbar-btn review-submit" disabled={!canReview} title={canReview ? 'Open the native review composer without submitting' : 'Review submission is not available for this PR'} onclick={()=>{if(goToTab('conversation'))requestAnimationFrame(()=>focusWhenReady('#verdict-control'));}}>Review changes</button>
                 <Popover label="Review tools" text="⋯" closeOnAction>
                   {#if workspaceEnabled}<a class="menu-action" href={`#/pr/${repo}/${number}`} onclick={event=>guardTabNavigation(event,'conversation')}>Conversation</a><a class="menu-action" href={`#/pr/${repo}/${number}/agents`} onclick={event=>guardTabNavigation(event,'agents')}>PR agents</a><a class="menu-action" href={`#/pr/${repo}/${number}/actions`} onclick={event=>guardTabNavigation(event,'actions')}>PR actions</a><hr/>{/if}
-                  <button class="menu-action" disabled={!comparisonFiles.length} onclick={event=>inspectInsights(event,selectedPath ?? comparisonFiles[0]?.path)}>Insights and coverage</button>
                   <button class="menu-action" onclick={()=>openQuickCommands()}>Commands <small>⌘⇧P</small></button>
                   <button class="menu-action" onclick={() => openBeside(selectedPath ?? files[0]?.path)} disabled={!files.length}>Open beside</button>
                   <button class="menu-action" disabled={viewedSnapshot.matches('saving') || viewedSnapshot.matches('loading')} onclick={()=>viewedActor.send({type:'REFRESH'})}>Refresh Viewed from GitHub</button>
@@ -3868,7 +3872,7 @@
           {#if investigationsEnabled && diffState === 'ready'}{#key `${repo}#${number}`}<div class="investigation-slot"><InvestigationWorkbench onReviewDefinition={(definition,request)=>{if(!finishFileEdit())return;restoredLocation='';navigateReviewState(reviewDefinitionDestination({...reviewState,investigation:undefined},definition,request,{...organizationComparison,files:comparisonFiles}));}} bind:this={investigationWorkbench} changedPaths={comparisonFiles.map(file=>file.path)} currentHead={pr.headRefOid} currentBase={pr.baseRefOid} pendingReviewsEnabled={prefs.pendingReviewsEnabled} {pendingReview} {pendingReviewStale} onSubmitDraft={submitFindingDraft} {repo} {number} headRef={pr.headRefName} review={reviewState} restored={reviewLocation?.investigation} onRoute={(investigation,mode)=>navigateReview({investigation},mode)} /></div>{/key}{/if}
           {#snippet sidebarContents()}
             {#if organizationEnabled && diffState === "ready" && comparisonFiles.length}
-              <ReviewOrganization insights={insightFiles} insightsLoading={insightsSnapshot.matches('loading')} insightsError={insightsSnapshot.context.error} bind:this={organizationPanel} comparison={organizationComparison} nativeFiles={comparisonFiles} {selectedPath} onChange={receiveOrganization} onSelect={path => { openChangedFile(path); reviewSidebar?.dismiss(); }} onOpenBeside={path => { openBeside(path); reviewSidebar?.dismiss(); }} fileHref={path => buildReviewHash(repo, number, { ...reviewState, file: path, view: "diff", line: null, rev: organizationComparison.head, base: organizationComparison.base })} restoredControls={reviewState.controls} onControlsChange={(controls, mode, file) => navigateReview({controls,...(!workspaceEnabled && file !== undefined ? {file,...(file !== reviewState.file ? {line:null} : {})} : {})}, mode)} />
+              <ReviewOrganization onInspectInsights={inspectInsights} insights={insightFiles} insightsLoading={insightsSnapshot.matches('loading')} insightsError={insightsSnapshot.context.error} bind:this={organizationPanel} comparison={organizationComparison} nativeFiles={comparisonFiles} {selectedPath} onChange={receiveOrganization} onSelect={path => { openChangedFile(path); reviewSidebar?.dismiss(); }} onOpenBeside={path => { openBeside(path); reviewSidebar?.dismiss(); }} fileHref={path => buildReviewHash(repo, number, { ...reviewState, file: path, view: "diff", line: null, rev: organizationComparison.head, base: organizationComparison.base })} restoredControls={reviewState.controls} onControlsChange={(controls, mode, file) => navigateReview({controls,...(!workspaceEnabled && file !== undefined ? {file,...(file !== reviewState.file ? {line:null} : {})} : {})}, mode)} />
             {:else}
               <FileTree files={treeFiles} {selectedPath} hoveredPath={hoveredDiffPath} onSelect={selectFileByPath} onContextMenu={prefs.reviewFileMenuEnabled ? openFileMenu : null} />
             {/if}
@@ -8123,6 +8127,7 @@
   }
   .code-first.workspace-review .pr-head,.detail-frame.code-first.workspace-review .tabs{display:none;}
   .code-first .files-toolbar .toolbar-btn{white-space:nowrap;}
+  .insights-toggle[aria-pressed=true]{background:var(--link-bg);color:var(--link);}.insights-toggle span{color:var(--warn,#d8b36b);}
   .calm-review{padding-inline:14px;padding-bottom:0;scroll-padding-top:calc(var(--review-toolbar-height,48px) + 44px);}
   .calm-review .code-first > .detail{padding-top:8px;padding-bottom:16px;}
   .code-first .pr-head{width:100%;margin-left:0;padding:6px 8px;}.detail-frame.code-first.files-tab .tabs{width:100%;margin-left:0;gap:8px;align-items:center;padding:3px 7px;margin-bottom:7px;}

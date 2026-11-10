@@ -41,4 +41,4 @@ Final follow-up verification passed 65 focused tests / 336 assertions and the No
 
 ## Contextual evidence
 
-Insights is available in every reading order through file actions or Review tools. A quiet header entry appears only for measured complexity increases, new resolved cycles or frequent historical activity. The contextual Change/History/Dependencies rail, optional Hotspots order and evidence filters keep the compact defaults intact. See [review insights](review-insights.md) for setup, measurement scope and the state contract.
+Insights is available in every reading order through its visible toolbar toggle. Amber file-tree counts open notable observations directly, and collapsed folders indicate marked descendants. A quiet header entry appears only for measured complexity increases, new resolved cycles or frequent historical activity. The contextual Change/History/Dependencies rail, optional Hotspots order and evidence filters keep the compact defaults intact. See [review insights](review-insights.md) for setup, measurement scope and the state contract.

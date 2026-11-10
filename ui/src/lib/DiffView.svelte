@@ -2470,7 +2470,6 @@
         {/if}
         {#if enhancedReview}
           <Popover label={`File actions for ${file.path}`} closeOnAction>
-            {#if onInspectInsights}<button class="menu-action" onclick={event=>onInspectInsights(event,file.path)}>Insights and coverage</button>{/if}
             {#if onOpenBeside}<button class="menu-action" onclick={()=>onOpenBeside(file.path)}>Open beside</button>{/if}
             {#if !isCollapsed && !file.isBinary && !file.isDeleted && !file.isUnchangedRename}<button class="menu-action" disabled={whole?.status === 'loading'} onclick={()=>toggleWholeFile(file)}>{whole?.status === 'ready' ? 'Show diff hunks' : whole?.status === 'loading' ? 'Loading full file…' : 'Expand all lines'}</button>{/if}
             {#if !isCollapsed && editable && !file.isBinary && !file.isDeleted && !file.isUnchangedRename}<button class="menu-action" onclick={event=>startFileEdit(file,toolbarEditPlacement(event.currentTarget))}>Edit file</button>{/if}

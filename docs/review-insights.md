@@ -1,6 +1,6 @@
 # Deterministic review insights
 
-Enhanced Files offers a quiet **Insights · N** file-header button when a file has a measured complexity increase, a new resolved cycle, or at least five observed historical commits. N counts these categories, not individual functions or defects. File actions and Review tools always offer **Insights and coverage**, including for unsupported files. The rail is contextual and does not change the chosen reading order.
+Enhanced Files offers a quiet **Insights · N** file-header button when a file has a measured complexity increase, a new resolved cycle, or at least five observed historical commits. N counts these categories, not individual functions or defects. The visible toolbar **Insights** toggle also opens coverage for files without observations, including unsupported files. The rail is contextual and does not change the chosen reading order.
 
 **Change** shows increases in cyclomatic complexity for touched functions and folds other changed declarations behind a disclosure. **History** shows commits, contributors and repeated co-change in a bounded base-anchored window. **Dependencies** shows resolved imports, dependents and cycle groups among supported changed JS/TS files. It is a partial graph, not repository-wide impact analysis. Type-only imports do not form cycle edges.
 
@@ -87,3 +87,20 @@ The review selection remains authoritative. The Insights actor receives file cha
 The synchronization regression was reproduced on the live 103-file review: the URL and tree selected `server/tsWorker.ts` while Insights retained `server/tsService.ts`. Two actor regressions failed before the change and passed afterward, covering retained tabs/evidence, no closed-rail reopening, and changes during load/failure/retry. Live verification covered file clicks, browser Back, Shift+J, ordinary viewport scrolling, both docked pane tabs, return to single view and Import flow sorting. The organization callback now preserves the viewport-selected file when receiving the same file order, preventing the older URL location from overriding it. Before/after captures are `prview-insights-follow-before.png` and `prview-insights-follow-after.png`. Fixed feature version: `1794284561874`.
 
 The synchronization delivery passed the same focused 12-file suite with 72 tests / 512 assertions, plus the production build from the staged-source snapshot. The two new actor regressions were observed failing against the previous machine before implementation.
+
+## Direct discovery controls
+
+The review toolbar exposes a visible Insights toggle for the current file, including files without notable observations. Marked file-tree rows expose a separate amber diamond/count button. Its tooltip and accessible description identify the observations; the count is categories, not a risk score. Existing file-status colors and 32px row height remain unchanged. A collapsed folder shows one amber diamond when it contains marked descendants, with their file count available on hover or focus.
+
+| Event | Result |
+| --- | --- |
+| Toolbar Insights while closed | Open the current compatible review file through the existing actor |
+| Toolbar Insights while open | Close and restore focus |
+| File-tree observation marker | Open Insights and select/reveal that file directly |
+| Ordinary filename | Preserve existing navigation; only an already-open rail follows |
+| Collapse/expand folder | Hide/show descendants; aggregate marker appears only while collapsed |
+| Missing evidence or legacy workspace | No observation markers; missing data never implies a clean result |
+
+Direct-discovery verification used the live 38-file Storybook comparison. Its `duplicate-story-with-new-name.ts` marker showed two categories with the real 12 → 14 function measurement and six observed historical commits. One click selected its PR diff and opened Insights. The toolbar opened coverage for an unmarked file and toggled closed. A collapsed filtered folder exposed its marked-file count; Enter opened the file marker and Escape restored focus with the reason description attached. Markers and the toolbar were checked in all six orders. Desktop rows stayed 32px; the existing narrow-screen 44px rows and usable 520px toolbar/rail were retained. No GitHub write was performed. Feature version: `1794285549698`.
+
+The direct-discovery delivery passed 75 tests / 531 assertions across 13 files and a production build from the staged-source snapshot. The legacy 103-file PR rendered without the new toggle or markers. Visual evidence uses the prior `prview-insights-quiet-live.png` and new `prview-insights-discovery.png`; the latter shows the real toolbar, file markers and contextual evidence together.

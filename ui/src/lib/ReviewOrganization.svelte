@@ -7,11 +7,12 @@
   import { captureFromDiff } from '../../../shared/review-organization/capture.ts';
   import { organizationModel, emptyGraph } from '../../../shared/review-organization/model.ts';
   import { roleLabels } from '../../../shared/review-organization/analysis.ts';
+  import {reviewInsightSummary} from './reviewInsightSummary.js';
   import {explainReviewOrder} from './reviewOrderExplanation.js';
   import { beginReviewFileDrag } from './reviewFileDrag.js';
   import { relatedCandidates } from '../../../shared/review-organization/relationships.ts';
 
-  let { comparison, nativeFiles, selectedPath, onChange, onSelect, onOpenBeside = null, fileHref = null, onControlsChange = null, restoredControls = null, insights = null, insightsLoading = false, insightsError = '' } = $props();
+  let { comparison, nativeFiles, selectedPath, onChange, onSelect, onOpenBeside = null, fileHref = null, onControlsChange = null, restoredControls = null, insights = null, insightsLoading = false, insightsError = '', onInspectInsights = null } = $props();
   let optionsPanel;
   export function showOptions() { optionsPanel?.show(); }
   export function setOrder(order) { send({type:'ORDER.SET', order}); }
@@ -46,6 +47,7 @@
   let hiddenFiles = $derived(nativeEntries(model.hidden));
   let fileDetails = $derived(new Map(model.entries.map(entry => [entry.file.filename, {
     rank: controls.order === 'path' ? null : entry.rank,
+    insight: reviewInsightSummary(insights?.[entry.file.filename]),
     title: `${entry.file.filename}\n${explainReviewOrder(entry,model.entries,controls.order,insights).join('\n')}\n${entry.reason}`,
     label: `${entry.file.filename}, reading position ${entry.rank} of ${model.entries.length}, ${entry.file.additions} lines added, ${entry.file.deletions} lines removed${entry.state === 'show' ? '' : `, ${entry.state}`}`,
   }])));
@@ -70,6 +72,11 @@
     if (model.folded.includes(path)) send({ type: 'FILE.TOGGLE', path });
     await tick();
     onSelect(path);
+  }
+  async function inspectFile(event,path) {
+    const trigger=event.currentTarget;
+    onInspectInsights?.({currentTarget:trigger},path);
+    if(model.hidden.some(entry=>entry.file.filename===path))await reveal(path);else await select(path);
   }
   async function reveal(path) { send({ type: 'FILE.SET', path, visibility: 'show' }); await tick(); onSelect(path); }
   export async function revealFile(path, notify = true) {
@@ -141,16 +148,16 @@
     {#if snapshot.matches('error')}<div class="note error" role="alert">Analysis unavailable. <button onclick={showOptions}>Details / retry</button></div>{/if}
   </div>
   <div class="queue" aria-label="Ordered changed files">
-    <FileTree files={treeFiles} {selectedPath} {fileDetails} {fileHref} groupByFolder={controls.folders} onSelect={select} collapsedPaths={controls.collapsedFolders} onToggleDirectory={directory => send({type:'FOLDER.TOGGLE',directory})} {onOpenBeside} onDragFile={dragFile} />
+    <FileTree files={treeFiles} {selectedPath} {fileDetails} {fileHref} onInspectInsights={onInspectInsights ? inspectFile : null} groupByFolder={controls.folders} onSelect={select} collapsedPaths={controls.collapsedFolders} onToggleDirectory={directory => send({type:'FOLDER.TOGGLE',directory})} {onOpenBeside} onDragFile={dragFile} />
     {#if !model.visible.length}<p class="note">{controls.insightFilters?.length && insightsLoading ? 'Reading evidence for these filters…' : controls.insightFilters?.length && insightsError ? insightsError : 'No visible files match.'} <button onclick={() => { send({ type: 'QUERY.SET', query: '' }); send({ type: 'SHOW_ALL' }); }}>Show all files</button></p>{/if}
   {#if foldedEntries.length}
     <details open={Boolean(controls.query)}><summary>Folded files ({foldedEntries.length})</summary>
-      <FileTree files={foldedFiles} {selectedPath} {fileDetails} {fileHref} groupByFolder={false} onSelect={select} {onOpenBeside} onDragFile={dragFile} />
+      <FileTree files={foldedFiles} {selectedPath} {fileDetails} {fileHref} onInspectInsights={onInspectInsights ? inspectFile : null} groupByFolder={false} onSelect={select} {onOpenBeside} onDragFile={dragFile} />
     </details>
   {/if}
   {#if model.hidden.length}
     <details><summary>Hidden files ({model.hidden.length})</summary>
-      <FileTree files={hiddenFiles} {selectedPath} {fileDetails} {fileHref} groupByFolder={false} onSelect={reveal} />
+      <FileTree files={hiddenFiles} {selectedPath} {fileDetails} {fileHref} onInspectInsights={onInspectInsights ? inspectFile : null} groupByFolder={false} onSelect={reveal} />
     </details>
   {/if}
   </div>

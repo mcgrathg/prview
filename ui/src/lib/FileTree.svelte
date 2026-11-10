@@ -6,9 +6,10 @@
   let {
     files, selectedPath, hoveredPath = null, onSelect, onContextMenu = null,
     collapsedPaths = null, onToggleDirectory = null, onOpenBeside = null, onDragFile = null,
-    groupByFolder = true, fileDetails = new Map(), fileHref = null,
+    groupByFolder = true, fileDetails = new Map(), fileHref = null, onInspectInsights = null,
   } = $props();
 
+  const treeId=$props.id();
   let lastSelectionKey = null;
   let rowHeight = $state(32);
   const OVERSCAN = 12;
@@ -28,6 +29,7 @@
     icon: fileIcon(file.path.split('/').pop()),
     isRenamed: Boolean(file.previousPath),
     isUnchangedRename: file.isUnchangedRename,
+    insight: onInspectInsights ? fileDetails.get(file.path)?.insight : null,
   })));
 
   let tree = $derived.by(() => {
@@ -80,13 +82,16 @@
   function sumLines(node) {
     let additions = node.files.reduce((sum, file) => sum + file.additions, 0);
     let deletions = node.files.reduce((sum, file) => sum + file.deletions, 0);
+    let insightFiles = node.files.filter(file => file.insight).length;
     for (const dir of node.dirs.values()) {
       sumLines(dir);
       additions += dir.additions;
       deletions += dir.deletions;
+      insightFiles += dir.insightFiles;
     }
     node.additions = additions;
     node.deletions = deletions;
+    node.insightFiles = insightFiles;
   }
 
   function fileTone(file) {
@@ -211,11 +216,12 @@
         <Chevron direction={collapsedDirs.has(value.path) ? "right" : "down"} size={12} />
         <svg class="folder-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.5 4.5V3a1 1 0 0 1 1-1h3l1.5 2h6.5a1 1 0 0 1 1 1v7.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z" /></svg>
         <span class="name">{value.name}</span>
+        {#if collapsedDirs.has(value.path) && value.insightFiles}<span class="folder-insights" role="img" aria-label={`${value.insightFiles} file${value.insightFiles===1?'':'s'} with review observations`} title={`${value.insightFiles} file${value.insightFiles===1?'':'s'} with review observations inside this folder`}>◇</span>{/if}
         <span class="counts mono"><span class="add">+{value.additions}</span><span class="del">−{value.deletions}</span></span>
       </button>
     {:else}
       {@const details = fileDetails.get(value.path)}
-      <div class="file-row">
+      <div class="file-row" class:has-insights={Boolean(value.insight)}>
       <svelte:element this={fileHref ? 'a' : 'button'} href={fileHref?.(value.path)} role={fileHref ? 'link' : 'button'} tabindex="0"
         class="row file"
         data-event="tree-file"
@@ -265,6 +271,7 @@
           <span class="counts mono"><span class="add">+{value.additions}</span><span class="del">−{value.deletions}</span></span>
         {/if}
       </svelte:element>
+      {#if value.insight}<button class="insight-marker" type="button" data-event="tree-file-insights" aria-label={`Open Insights for ${value.path}: ${value.insight.count} observation${value.insight.count===1?'':'s'}`} aria-describedby={`${treeId}-insight-${encodeURIComponent(value.path)}`} title={value.insight.title} onclick={event=>onInspectInsights(event,value.path)}><span aria-hidden="true">◇</span> {value.insight.count}</button><span id={`${treeId}-insight-${encodeURIComponent(value.path)}`} hidden>{value.insight.title}</span>{/if}
       {#if onOpenBeside}<div class="row-actions"><Popover label={`Actions for ${value.path}`} closeOnAction><button class="menu-action" onclick={() => onOpenBeside(value.path)}>Open beside</button></Popover></div>{/if}
       </div>
     {/if}
@@ -274,6 +281,7 @@
 
 <style>
   .file-row{position:relative;height:var(--tree-row-height);flex:none;} .file-row .row{height:var(--tree-row-height);padding-right:31px;} .row-actions{position:absolute;right:0;top:2px;opacity:0;} .file-row:hover .row-actions,.file-row:focus-within .row-actions{opacity:1;} @media(pointer:coarse){.row-actions{opacity:1;}}
+  .file-row.has-insights .row{padding-right:33px;}.file-row.has-insights .row-actions{right:33px;background:var(--panel);border-radius:4px;}.insight-marker{position:absolute;right:0;top:calc((var(--tree-row-height) - 24px)/2);min-width:30px;height:24px;display:flex;align-items:center;justify-content:center;gap:3px;border:0;border-radius:4px;background:transparent;color:var(--warn,#d8b36b);font:10px var(--sans);cursor:pointer;}.insight-marker:hover{background:var(--ghost-hover);}.insight-marker:focus-visible{outline:2px solid var(--link);outline-offset:1px;}.folder-insights{flex:none;color:var(--warn,#d8b36b);font-size:13px;}
   .tree {
     --tree-row-height:32px;
     display: flex;

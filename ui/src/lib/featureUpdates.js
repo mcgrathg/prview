@@ -203,6 +203,16 @@ export const FEATURE_UPDATES = [
       { title: 'One active review file', body: 'File-selection events update the existing Insights state machine without reloading analysis. Organization refreshes preserve viewport selection instead of restoring an older URL file. Back follows the restored location; incompatible pane comparisons close the rail rather than show unrelated evidence.' },
     ],
   },
+  {
+    version: 1794285549698,
+    title: 'Find and open review insights directly',
+    summary: 'A visible Insights toggle and amber file-tree markers bring evidence within one click.',
+    howToTry: 'Use Insights in the review toolbar, or click an amber diamond/count beside a file. Hover the marker or focus it to read its accessible description. Collapse a folder to see whether it contains marked files.',
+    changes: [
+      { title: 'Direct access in every order', body: 'The toolbar opens Insights and coverage for the current file, even without notable observations. File markers select the file and open its evidence directly. Insights no longer depends on an overflow-menu entry.' },
+      { title: 'Concrete reasons, compact rows', body: 'Counts represent observation categories: complexity increases, a new resolved import cycle, or recent historical activity. Reasons include the actual measurements and their scope. Existing status colors, row heights, normal filename navigation and the synchronized rail remain intact.' },
+    ],
+  },
 ];
 export const LATEST_UPDATE = FEATURE_UPDATES.at(-1);
 export const FEATURE_SEEN_KEY = 'prview:last-seen-feature';
